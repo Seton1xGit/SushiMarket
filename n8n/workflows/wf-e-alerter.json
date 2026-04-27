@@ -1,10 +1,10 @@
 {
-  "updatedAt": "2026-04-27T23:32:09.687Z",
+  "updatedAt": "2026-04-27T23:49:14.821Z",
   "createdAt": "2026-04-27T23:05:40.943Z",
   "id": "O9Rt4HG7kDqxBrCv",
   "name": "wf-e-alerter",
   "description": null,
-  "active": false,
+  "active": true,
   "isArchived": false,
   "nodes": [
     {
@@ -18,13 +18,250 @@
       ],
       "parameters": {
         "color": 3,
-        "width": 1240,
-        "height": 260,
-        "content": "## WF-E · Alerter — алерты админу (вспомогательный)\n\n**Что делает простым языком**\nЭтот WF — единая точка для оповещений админа. Когда любой другой WF ловит критичный кейс, он зовёт WF-E и передаёт сюда причину. Здесь:\n1. Принимает payload `{ reason, order_id?, error?, context? }`.\n2. Смотрит в `alert_throttle`: одинаковые `(reason, order_id)` не отправляются чаще, чем раз в `ALERT_THROTTLE_MIN` минут (по умолчанию 30 мин). Это защита от флуда при повторяющихся ошибках.\n3. Если можно отправлять — формирует короткое сообщение и шлёт в Telegram-канал админа.\n4. Записывает факт отправки в `alert_throttle` и в `notification_log` для аудита.\n\nТипичные `reason`: `no_phone`, `zone_not_configured`, `token_expired_callcenter`, `token_expired_public`, `template_rejected`, `api_error_callcenter`, `api_error_meta`.\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT `alert_throttle` → IF (>= throttle window?) → Code (форматировать сообщение) → Telegram sendMessage → Postgres UPSERT `alert_throttle` → Postgres INSERT `notification_log`\nКреды: `cred_postgres`, `cred_telegram_bot` (TBD).\nEnv: `TELEGRAM_ADMIN_CHAT_ID`, `ALERT_THROTTLE_MIN=30`.\n\n*Status:* пустой stub. Будет наполнен первым из B/C/D/E (по DESIGN.md §14)."
+        "width": 1340,
+        "height": 280,
+        "content": "## WF-E · Alerter — алерты админу\n\n**Что делает простым языком**\nЕдиная точка для оповещений админа. Когда любой WF ловит критичный кейс — он зовёт WF-E с payload `{ reason, order_id?, error?, context? }`. Здесь:\n1. Проверяем `alert_throttle`: одинаковые `(reason, order_id)` не отправляем чаще раза в 30 мин (защита от флуда).\n2. Если можно — формируем HTML-сообщение и шлём в Telegram админу.\n3. Записываем факт в `alert_throttle` (UPSERT) и в `notification_log` (для аудита).\n\nТипичные `reason`: `no_phone`, `zone_not_configured`, `token_expired_callcenter`, `token_expired_public`, `template_rejected`, `api_error_callcenter`, `api_error_meta`.\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT throttle → IF (allowed?) → Code (format) → Telegram sendMessage → Postgres UPSERT alert_throttle + INSERT notification_log\nКреды: `cred_postgres`, `cred_telegram_bot`. Окно throttle — 30 мин (хардкод в SQL пока)."
+      }
+    },
+    {
+      "id": "node-trigger",
+      "name": "Receive Alert",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        420
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "reason"
+            },
+            {
+              "name": "order_id",
+              "type": "number"
+            },
+            {
+              "name": "error"
+            },
+            {
+              "name": "context"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-throttle",
+      "name": "Check Throttle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        420,
+        420
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT 1 AS hit FROM alert_throttle WHERE reason = $1 AND order_id = $2 AND last_sent_at > NOW() - INTERVAL '30 minutes' LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $json.reason || 'unknown' }},={{ Number($json.order_id) || 0 }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-allowed",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "no-throttle",
+              "leftValue": "={{ $('Check Throttle').first().json.hit ?? 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-format",
+      "name": "Format Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Берём данные из триггера, формируем HTML для Telegram.\nconst src = $('Receive Alert').first().json;\nconst reason = String(src.reason || 'unknown');\nconst orderId = src.order_id ? String(src.order_id) : null;\nconst err = src.error ? String(src.error) : null;\nconst ctx = src.context;\n\nfunction esc(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nconst lines = ['🚨 <b>SushiMarket alert</b>'];\nlines.push(`<b>reason:</b> <code>${esc(reason)}</code>`);\nif (orderId) lines.push(`<b>order_id:</b> <code>${esc(orderId)}</code>`);\nif (err) lines.push(`<b>error:</b> <code>${esc(err.slice(0, 500))}</code>`);\nif (ctx) {\n  const ctxStr = typeof ctx === 'string' ? ctx : JSON.stringify(ctx);\n  lines.push(`<b>context:</b> <code>${esc(ctxStr.slice(0, 500))}</code>`);\n}\nlines.push(`<i>${new Date().toISOString()}</i>`);\n\nreturn [{ json: { reason, order_id: src.order_id || 0, message: lines.join('\\n'), error: err, context: ctx } }];"
+      }
+    },
+    {
+      "id": "node-telegram",
+      "name": "TG Send",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1080,
+        320
+      ],
+      "parameters": {
+        "chatId": "5150596167",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "z27hahzThmGfBRup",
+          "name": "cred_telegram_bot"
+        }
+      }
+    },
+    {
+      "id": "node-upsert-throttle",
+      "name": "UPSERT Throttle",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO alert_throttle(reason, order_id, last_sent_at) VALUES ($1, $2, NOW()) ON CONFLICT (reason, order_id) DO UPDATE SET last_sent_at = NOW()",
+        "options": {
+          "queryReplacement": "={{ $('Format Message').first().json.reason || 'unknown' }},={{ Number($('Format Message').first().json.order_id) || 0 }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-log",
+      "name": "Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1520,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log(order_id, template, channel, success, error_text) VALUES ($1, $2, 'telegram', true, $3)",
+        "options": {
+          "queryReplacement": "={{ Number($('Format Message').first().json.order_id) || 0 }},={{ 'alert_' + ($('Format Message').first().json.reason || 'unknown') }},={{ (($('Format Message').first().json.error ?? '-') + '').replace(/,/g, ';').slice(0, 500) || '-' }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
       }
     }
   ],
-  "connections": {},
+  "connections": {
+    "Receive Alert": {
+      "main": [
+        [
+          {
+            "node": "Check Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Throttle": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Format Message": {
+      "main": [
+        [
+          {
+            "node": "TG Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TG Send": {
+      "main": [
+        [
+          {
+            "node": "UPSERT Throttle",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UPSERT Throttle": {
+      "main": [
+        [
+          {
+            "node": "Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
   "settings": {
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false,
@@ -32,9 +269,9 @@
   },
   "staticData": null,
   "meta": null,
-  "versionId": "597ebced-c61a-4b7b-ab69-854d04067bc4",
-  "activeVersionId": null,
-  "versionCounter": 3,
+  "versionId": "8c6a217c-cf4f-4274-a97b-c2493dd311a1",
+  "activeVersionId": "8c6a217c-cf4f-4274-a97b-c2493dd311a1",
+  "versionCounter": 18,
   "triggerCount": 0,
   "shared": [
     {
@@ -91,5 +328,280 @@
     }
   ],
   "tags": [],
-  "activeVersion": null
+  "activeVersion": {
+    "updatedAt": "2026-04-27T23:49:14.822Z",
+    "createdAt": "2026-04-27T23:49:14.822Z",
+    "versionId": "8c6a217c-cf4f-4274-a97b-c2493dd311a1",
+    "workflowId": "O9Rt4HG7kDqxBrCv",
+    "nodes": [
+      {
+        "id": "sticky-readme",
+        "name": "README",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          80,
+          60
+        ],
+        "parameters": {
+          "color": 3,
+          "width": 1340,
+          "height": 280,
+          "content": "## WF-E · Alerter — алерты админу\n\n**Что делает простым языком**\nЕдиная точка для оповещений админа. Когда любой WF ловит критичный кейс — он зовёт WF-E с payload `{ reason, order_id?, error?, context? }`. Здесь:\n1. Проверяем `alert_throttle`: одинаковые `(reason, order_id)` не отправляем чаще раза в 30 мин (защита от флуда).\n2. Если можно — формируем HTML-сообщение и шлём в Telegram админу.\n3. Записываем факт в `alert_throttle` (UPSERT) и в `notification_log` (для аудита).\n\nТипичные `reason`: `no_phone`, `zone_not_configured`, `token_expired_callcenter`, `token_expired_public`, `template_rejected`, `api_error_callcenter`, `api_error_meta`.\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT throttle → IF (allowed?) → Code (format) → Telegram sendMessage → Postgres UPSERT alert_throttle + INSERT notification_log\nКреды: `cred_postgres`, `cred_telegram_bot`. Окно throttle — 30 мин (хардкод в SQL пока)."
+        }
+      },
+      {
+        "id": "node-trigger",
+        "name": "Receive Alert",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          200,
+          420
+        ],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "reason"
+              },
+              {
+                "name": "order_id",
+                "type": "number"
+              },
+              {
+                "name": "error"
+              },
+              {
+                "name": "context"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "node-throttle",
+        "name": "Check Throttle",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          420,
+          420
+        ],
+        "alwaysOutputData": true,
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT 1 AS hit FROM alert_throttle WHERE reason = $1 AND order_id = $2 AND last_sent_at > NOW() - INTERVAL '30 minutes' LIMIT 1",
+          "options": {
+            "queryReplacement": "={{ $json.reason || 'unknown' }},={{ Number($json.order_id) || 0 }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-allowed",
+        "name": "Allowed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          640,
+          420
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "no-throttle",
+                "leftValue": "={{ $('Check Throttle').first().json.hit ?? 0 }}",
+                "rightValue": 1,
+                "operator": {
+                  "type": "number",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "node-format",
+        "name": "Format Message",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          860,
+          320
+        ],
+        "parameters": {
+          "jsCode": "// Берём данные из триггера, формируем HTML для Telegram.\nconst src = $('Receive Alert').first().json;\nconst reason = String(src.reason || 'unknown');\nconst orderId = src.order_id ? String(src.order_id) : null;\nconst err = src.error ? String(src.error) : null;\nconst ctx = src.context;\n\nfunction esc(s) {\n  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nconst lines = ['🚨 <b>SushiMarket alert</b>'];\nlines.push(`<b>reason:</b> <code>${esc(reason)}</code>`);\nif (orderId) lines.push(`<b>order_id:</b> <code>${esc(orderId)}</code>`);\nif (err) lines.push(`<b>error:</b> <code>${esc(err.slice(0, 500))}</code>`);\nif (ctx) {\n  const ctxStr = typeof ctx === 'string' ? ctx : JSON.stringify(ctx);\n  lines.push(`<b>context:</b> <code>${esc(ctxStr.slice(0, 500))}</code>`);\n}\nlines.push(`<i>${new Date().toISOString()}</i>`);\n\nreturn [{ json: { reason, order_id: src.order_id || 0, message: lines.join('\\n'), error: err, context: ctx } }];"
+        }
+      },
+      {
+        "id": "node-telegram",
+        "name": "TG Send",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          1080,
+          320
+        ],
+        "parameters": {
+          "chatId": "5150596167",
+          "text": "={{ $json.message }}",
+          "additionalFields": {
+            "appendAttribution": false,
+            "parse_mode": "HTML"
+          }
+        },
+        "credentials": {
+          "telegramApi": {
+            "id": "z27hahzThmGfBRup",
+            "name": "cred_telegram_bot"
+          }
+        }
+      },
+      {
+        "id": "node-upsert-throttle",
+        "name": "UPSERT Throttle",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1300,
+          320
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO alert_throttle(reason, order_id, last_sent_at) VALUES ($1, $2, NOW()) ON CONFLICT (reason, order_id) DO UPDATE SET last_sent_at = NOW()",
+          "options": {
+            "queryReplacement": "={{ $('Format Message').first().json.reason || 'unknown' }},={{ Number($('Format Message').first().json.order_id) || 0 }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-log",
+        "name": "Log",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1520,
+          320
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_log(order_id, template, channel, success, error_text) VALUES ($1, $2, 'telegram', true, $3)",
+          "options": {
+            "queryReplacement": "={{ Number($('Format Message').first().json.order_id) || 0 }},={{ 'alert_' + ($('Format Message').first().json.reason || 'unknown') }},={{ (($('Format Message').first().json.error ?? '-') + '').replace(/,/g, ';').slice(0, 500) || '-' }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Receive Alert": {
+        "main": [
+          [
+            {
+              "node": "Check Throttle",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Throttle": {
+        "main": [
+          [
+            {
+              "node": "Allowed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Allowed?": {
+        "main": [
+          [
+            {
+              "node": "Format Message",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Format Message": {
+        "main": [
+          [
+            {
+              "node": "TG Send",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "TG Send": {
+        "main": [
+          [
+            {
+              "node": "UPSERT Throttle",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "UPSERT Throttle": {
+        "main": [
+          [
+            {
+              "node": "Log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Ivan Ptichkin",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-27T23:49:14.860Z",
+        "id": 903,
+        "workflowId": "O9Rt4HG7kDqxBrCv",
+        "versionId": "8c6a217c-cf4f-4274-a97b-c2493dd311a1",
+        "event": "activated",
+        "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7"
+      }
+    ]
+  }
 }

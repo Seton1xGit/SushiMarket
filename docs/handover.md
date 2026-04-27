@@ -125,7 +125,7 @@ URL каждого: `https://n8n.thefreedom.pro/workflow/<id>`.
 | `cred_datafood_public`  | `OvipNoJ83kkncmrA` | httpHeaderAuth | Header `Authorization: Bearer <DATAFOOD_PUBLIC_TOKEN>` |
 | `cred_postgres`         | `VCeTigIhYateDNgR` | postgres       | Supabase pooler, `allowUnauthorizedCerts=true` (Supabase pooler даёт self-signed cert chain, который n8n не доверяет по умолчанию) |
 | `cred_meta_whatsapp`    | (TBD)              | whatsAppApi или httpHeaderAuth | Bearer от Meta + Phone-Number-ID |
-| `cred_telegram_bot`     | (TBD)              | telegramApi    | Bot token от @BotFather |
+| `cred_telegram_bot`     | `z27hahzThmGfBRup` | telegramApi    | Bot @SushiMarketAlert_bot, chat_id админа `5150596167` |
 
 **Воссоздание на другом инстансе** — см. §3.6.
 
@@ -390,3 +390,5 @@ print('OK')
 |------|-----------------|
 | 2026-04-28 | Первая версия. Зафиксированы доступы (n8n, Supabase, GitHub), credentials, workflow IDs, runbook. |
 | 2026-04-28 | Phase 1 WF-A собран (Schedule 15s → Fetch Listing → Validate → Load Known → Compute Diff). Postgres credential пересоздан с `allowUnauthorizedCerts=true` (новый id `VCeTigIhYateDNgR`) — Supabase pooler не проходит проверку TLS chain в n8n по умолчанию. Manual run #269867 успешен. |
+| 2026-04-28 | Sticky-плашки добавлены во все 5 WF (заголовок + что делает простым языком + тех стек). |
+| 2026-04-28 | WF-E (Alerter) построен и end-to-end протестирован. Telegram bot @SushiMarketAlert_bot, cred id `z27hahzThmGfBRup`. Проверено: первый запуск отправляет в Telegram + пишет в `alert_throttle` и `notification_log`; повторный запуск в течение 30 мин корректно блокируется throttle'ом. Известные нюансы n8n queryReplacement: (a) при пустой строке последний параметр обрезается — нужен placeholder `'-'`; (b) запятые внутри значения ломают split — заменяем на `;`; (c) `=alert_{{X}}` не склеивает префикс с выражением, нужен явный `{{ 'alert_' + X }}`. |
