@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-27T23:22:17.611Z",
+  "updatedAt": "2026-04-27T23:32:03.644Z",
   "createdAt": "2026-04-27T23:05:35.769Z",
   "id": "bLhdS9V4FioCdVZI",
   "name": "wf-a-detector",
@@ -8,13 +8,29 @@
   "isArchived": false,
   "nodes": [
     {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 5,
+        "width": 1240,
+        "height": 200,
+        "content": "## WF-A · Detector — триггер всей системы\n\n**Что делает простым языком**\nКаждые 15 секунд просматривает список активных заказов в админке call-center, сравнивает с тем, что мы уже сохранили в БД, и порождает события:\n• появился новый заказ → `new_order`\n• у существующего изменился статус → `status_changed`\n• исчез из списка (доставлен или отменён) → `order_closed`\n\nДальше каждое событие будет передано в соответствующий WF (B — приветствие, C — «в пути», D — NPS). Сейчас Phase 1: только детектируем, без передачи дальше.\n\n**Тех стек**\nSchedule (15s) → HTTP GET `sushimarket-tr.datafood.tech/call-center/api/orders__deprecated` → Code (валидация JSON) → Postgres SELECT `order_events` (активные за 7 дней) → Code (compute diff)\nКреды: `cred_callcenter_admin` (Bearer Sanctum), `cred_postgres` (Supabase Free pooler)."
+      }
+    },
+    {
       "id": "node-schedule",
       "name": "Every 15s",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
         200,
-        300
+        360
       ],
       "parameters": {
         "rule": {
@@ -34,7 +50,7 @@
       "typeVersion": 4.2,
       "position": [
         420,
-        300
+        360
       ],
       "parameters": {
         "method": "GET",
@@ -102,10 +118,10 @@
       "typeVersion": 2,
       "position": [
         640,
-        300
+        360
       ],
       "parameters": {
-        "jsCode": "// Принимает ответ /call-center/api/orders__deprecated.\n// Возвращает один item: { orders: [...], count, fetched_at }.\n//\n// Замечание: API может вернуть {status:'error', message:'Заказы отсутствуют', data:[]}\n// при пустом активном списке — это НЕ ошибка, обрабатываем как пустой массив.\n\nconst input = $input.first()?.json ?? {};\n\n// Если responseFormat=json не сработал и тело пришло строкой — попробуем парсить.\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  // n8n завернул всё тело в .data как строку\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\n\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\n\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: r.Status,\n  raw: r\n})).filter(o => Number.isFinite(o.order_id));\n\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
+        "jsCode": "// Принимает ответ /call-center/api/orders__deprecated.\n// Возвращает один item: { orders: [...], count, fetched_at }.\n//\n// Замечание: API может вернуть {status:'error', message:'Заказы отсутствуют', data:[]}\n// при пустом активном списке — это НЕ ошибка, обрабатываем как пустой массив.\n\nconst input = $input.first()?.json ?? {};\n\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\n\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\n\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: r.Status,\n  raw: r\n})).filter(o => Number.isFinite(o.order_id));\n\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
       }
     },
     {
@@ -115,7 +131,7 @@
       "typeVersion": 2.5,
       "position": [
         860,
-        300
+        360
       ],
       "alwaysOutputData": true,
       "parameters": {
@@ -137,10 +153,10 @@
       "typeVersion": 2,
       "position": [
         1080,
-        300
+        360
       ],
       "parameters": {
-        "jsCode": "// Дифф между текущим листингом и снимком из БД.\n// Читает оба источника через cross-references — так нода работает даже при\n// пустом входе (например, БД пустая → Load Known даёт 0 items).\n//\n// Возвращает массив items: одно событие = один item.\n// Если событий нет — возвращает один служебный item с _no_events=true,\n// чтобы downstream цепочка всегда получала входящие данные.\n\nconst listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\n\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\n\nconst events = [];\n\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nif (events.length === 0) {\n  return [{ json: { _no_events: true, listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\n\nreturn events.map(e => ({ json: e }));"
+        "jsCode": "// Дифф между текущим листингом и снимком из БД.\n// Читает оба источника через cross-references — нода работает даже при\n// пустом входе (например, БД пустая → Load Known даёт 0 items).\n\nconst listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\n\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\n\nconst events = [];\n\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nif (events.length === 0) {\n  return [{ json: { _no_events: true, listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\n\nreturn events.map(e => ({ json: e }));"
       }
     }
   ],
@@ -197,9 +213,9 @@
   },
   "staticData": null,
   "meta": null,
-  "versionId": "18e4ab38-ca86-4229-8a64-43af1910179d",
+  "versionId": "211086bf-dbdc-4bc3-8539-d620074799eb",
   "activeVersionId": null,
-  "versionCounter": 7,
+  "versionCounter": 8,
   "triggerCount": 0,
   "shared": [
     {

@@ -1,0 +1,95 @@
+{
+  "updatedAt": "2026-04-27T23:32:06.604Z",
+  "createdAt": "2026-04-27T23:05:38.380Z",
+  "id": "NFKSGYx8koD1V55o",
+  "name": "wf-c-in-transit",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 1240,
+        "height": 260,
+        "content": "## WF-C · InTransit — «курьер выехал» (AC-2, AC-7)\n\n**Что делает простым языком**\nКогда WF-A замечает переход статуса заказа в `courier_delivers_an_order` (курьер взял заказ и поехал к клиенту), он передаёт сюда `order_id`. Этот WF:\n1. Проверяет в БД, что сообщение «в пути» ещё не отправлялось.\n2. Идёт в публичный API DataFood за деталями заказа (адрес, зона доставки).\n3. Узнаёт `customDeliveryTime` для зоны заказа — это и есть ETA в минутах.\n4. Если для зоны время **не настроено** → `transit_skipped=true`, ничего не шлём, эскалация в WF-E.\n5. Если настроено → отправляет WA «Курьер выехал, ориентировочно XX минут» и пишет `transit_sent_at`.\n\nДля самовывоза этот WF не вызывается — у pickup'а нет статуса «курьер в пути».\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT → HTTP GET `…/v1/client/orders/get_for_phone` → Code (извлечь zone_id — TBD-2) → HTTP GET `…/v1/get_custom_delivery_time/{zone}` → IF (minutes is set?) → WhatsApp Cloud API (template `order_in_transit_ru`) → Postgres UPDATE\nКреды: `cred_datafood_public`, `cred_postgres`, `cred_meta_whatsapp` (TBD).\n\n*Status:* пустой stub. Будет наполнен после WF-A Phase 2."
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "76475284-999b-44a5-8fb0-67a88a2b5bdf",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-27T23:05:38.383Z",
+      "createdAt": "2026-04-27T23:05:38.383Z",
+      "role": "workflow:owner",
+      "workflowId": "NFKSGYx8koD1V55o",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

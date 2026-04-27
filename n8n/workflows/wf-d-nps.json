@@ -1,0 +1,95 @@
+{
+  "updatedAt": "2026-04-27T23:32:07.987Z",
+  "createdAt": "2026-04-27T23:05:39.600Z",
+  "id": "KeQBljsKESqkPTX3",
+  "name": "wf-d-nps",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 4,
+        "width": 1240,
+        "height": 280,
+        "content": "## WF-D · NPS — отзыв через 2 часа (AC-3)\n\n**Что делает простым языком**\nКогда WF-A видит, что заказ закрыт со статусом `completed` (доставлен), он передаёт сюда `order_id` и `completed_at`. Этот WF:\n1. Считает время отправки: `target = completed_at + 2 часа` в часовом поясе Europe/Istanbul.\n2. Сравнивает с порогом 22:00 этого же дня:\n   • если `target ≤ 22:00` — продолжаем,\n   • если `target > 22:00` — пишем `feedback_skipped=true`, ничего не отправляем, выходим. (Решение пользователя: ночью клиентов не беспокоим.)\n3. Засыпает (Wait-node) до `target_time`. n8n переживает рестарты — задача воскрешается в нужный момент.\n4. На пробуждении ещё раз проверяет: статус всё ещё `completed`? (Если за это время заказ отменили — выходим.)\n5. Шлёт WhatsApp «Как вам наш сервис?» и пишет `feedback_sent_at`.\n\n**Тех стек**\nExecute Workflow trigger → Code (вычислить target_time, проверить cutoff 22:00) → IF (target ≤ cutoff?) → Postgres UPDATE feedback_scheduled_at → Wait until target → Postgres SELECT (re-check status) → IF (still completed and not sent?) → WhatsApp Cloud API (template `feedback_request_ru`) → Postgres UPDATE\nКреды: `cred_postgres`, `cred_meta_whatsapp` (TBD).\nEnv: `TZ=Europe/Istanbul`, `NPS_DELAY_HOURS=2`, `NPS_CUTOFF_HOUR=22`.\n\n*Status:* пустой stub. Будет наполнен после WF-A Phase 2."
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "5c2094b6-3b47-4af1-aa33-fef308711f3c",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-27T23:05:39.601Z",
+      "createdAt": "2026-04-27T23:05:39.601Z",
+      "role": "workflow:owner",
+      "workflowId": "KeQBljsKESqkPTX3",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

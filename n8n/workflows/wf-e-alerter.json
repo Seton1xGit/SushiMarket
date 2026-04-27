@@ -1,0 +1,95 @@
+{
+  "updatedAt": "2026-04-27T23:32:09.687Z",
+  "createdAt": "2026-04-27T23:05:40.943Z",
+  "id": "O9Rt4HG7kDqxBrCv",
+  "name": "wf-e-alerter",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky-readme",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 3,
+        "width": 1240,
+        "height": 260,
+        "content": "## WF-E · Alerter — алерты админу (вспомогательный)\n\n**Что делает простым языком**\nЭтот WF — единая точка для оповещений админа. Когда любой другой WF ловит критичный кейс, он зовёт WF-E и передаёт сюда причину. Здесь:\n1. Принимает payload `{ reason, order_id?, error?, context? }`.\n2. Смотрит в `alert_throttle`: одинаковые `(reason, order_id)` не отправляются чаще, чем раз в `ALERT_THROTTLE_MIN` минут (по умолчанию 30 мин). Это защита от флуда при повторяющихся ошибках.\n3. Если можно отправлять — формирует короткое сообщение и шлёт в Telegram-канал админа.\n4. Записывает факт отправки в `alert_throttle` и в `notification_log` для аудита.\n\nТипичные `reason`: `no_phone`, `zone_not_configured`, `token_expired_callcenter`, `token_expired_public`, `template_rejected`, `api_error_callcenter`, `api_error_meta`.\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT `alert_throttle` → IF (>= throttle window?) → Code (форматировать сообщение) → Telegram sendMessage → Postgres UPSERT `alert_throttle` → Postgres INSERT `notification_log`\nКреды: `cred_postgres`, `cred_telegram_bot` (TBD).\nEnv: `TELEGRAM_ADMIN_CHAT_ID`, `ALERT_THROTTLE_MIN=30`.\n\n*Status:* пустой stub. Будет наполнен первым из B/C/D/E (по DESIGN.md §14)."
+      }
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "597ebced-c61a-4b7b-ab69-854d04067bc4",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-27T23:05:40.945Z",
+      "createdAt": "2026-04-27T23:05:40.945Z",
+      "role": "workflow:owner",
+      "workflowId": "O9Rt4HG7kDqxBrCv",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
