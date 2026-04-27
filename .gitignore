@@ -1,0 +1,24 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# n8n exports с сырыми credentials (если случайно сохранятся)
+*.credentials.json
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local DB dumps
+*.sql.gz
+*.dump
