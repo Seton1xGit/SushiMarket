@@ -123,7 +123,7 @@ URL каждого: `https://n8n.thefreedom.pro/workflow/<id>`.
 |------|------------------------|------|------------|
 | `cred_callcenter_admin` | `J2VGKR5XEitklRVf` | httpHeaderAuth | Header `Authorization: Bearer <CALLCENTER_ADMIN_TOKEN>` |
 | `cred_datafood_public`  | `OvipNoJ83kkncmrA` | httpHeaderAuth | Header `Authorization: Bearer <DATAFOOD_PUBLIC_TOKEN>` |
-| `cred_postgres`         | `fKqqyXiNcispv6Ag` | postgres       | Supabase pooler: host/port/db/user/password/ssl=require |
+| `cred_postgres`         | `VCeTigIhYateDNgR` | postgres       | Supabase pooler, `allowUnauthorizedCerts=true` (Supabase pooler даёт self-signed cert chain, который n8n не доверяет по умолчанию) |
 | `cred_meta_whatsapp`    | (TBD)              | whatsAppApi или httpHeaderAuth | Bearer от Meta + Phone-Number-ID |
 | `cred_telegram_bot`     | (TBD)              | telegramApi    | Bot token от @BotFather |
 
@@ -193,7 +193,8 @@ git push
    n8n-cli credential add --type httpHeaderAuth --name "cred_datafood_public" \
      --data '{"name":"Authorization","value":"Bearer <DATAFOOD_PUBLIC_TOKEN>"}'
    n8n-cli credential add --type postgres --name "cred_postgres" \
-     --data '{"host":"...","port":6543,"database":"postgres","user":"...","password":"...","ssl":"require","allowUnauthorizedCerts":false,"sshTunnel":false}'
+     --data '{"host":"...","port":6543,"database":"postgres","user":"...","password":"...","allowUnauthorizedCerts":true,"sshTunnel":false}'
+   # Замечание: allowUnauthorizedCerts=true обязателен для Supabase pooler, иначе n8n рвёт TLS handshake с self-signed certificate chain. Поле ssl при этом ОТСУТСТВУЕТ — схема credential его запрещает, когда allowUnauthorizedCerts=true.
    # cred_meta_whatsapp и cred_telegram_bot — по факту наличия аккаунтов
    ```
 5. Создать папку `SushiMarket` и импортировать workflow:
@@ -388,3 +389,4 @@ print('OK')
 | Дата | Что изменилось |
 |------|-----------------|
 | 2026-04-28 | Первая версия. Зафиксированы доступы (n8n, Supabase, GitHub), credentials, workflow IDs, runbook. |
+| 2026-04-28 | Phase 1 WF-A собран (Schedule 15s → Fetch Listing → Validate → Load Known → Compute Diff). Postgres credential пересоздан с `allowUnauthorizedCerts=true` (новый id `VCeTigIhYateDNgR`) — Supabase pooler не проходит проверку TLS chain в n8n по умолчанию. Manual run #269867 успешен. |

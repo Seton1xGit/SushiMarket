@@ -1,0 +1,260 @@
+{
+  "updatedAt": "2026-04-27T23:22:17.611Z",
+  "createdAt": "2026-04-27T23:05:35.769Z",
+  "id": "bLhdS9V4FioCdVZI",
+  "name": "wf-a-detector",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "node-schedule",
+      "name": "Every 15s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-http-listing",
+      "name": "Fetch Listing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        420,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://sushimarket-tr.datafood.tech/call-center/api/orders__deprecated",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "activ"
+            },
+            {
+              "name": "type_select_cities",
+              "value": "include"
+            },
+            {
+              "name": "_",
+              "value": "={{ Date.now() }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Origin",
+              "value": "https://call-center-tr.sushi-market.com"
+            },
+            {
+              "name": "Referer",
+              "value": "https://call-center-tr.sushi-market.com/"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json, text/javascript, */*; q=0.01"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "tries": 3,
+            "waitBetweenTries": 2000
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "J2VGKR5XEitklRVf",
+          "name": "cred_callcenter_admin"
+        }
+      }
+    },
+    {
+      "id": "node-validate",
+      "name": "Validate Listing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Принимает ответ /call-center/api/orders__deprecated.\n// Возвращает один item: { orders: [...], count, fetched_at }.\n//\n// Замечание: API может вернуть {status:'error', message:'Заказы отсутствуют', data:[]}\n// при пустом активном списке — это НЕ ошибка, обрабатываем как пустой массив.\n\nconst input = $input.first()?.json ?? {};\n\n// Если responseFormat=json не сработал и тело пришло строкой — попробуем парсить.\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  // n8n завернул всё тело в .data как строку\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\n\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\n\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: r.Status,\n  raw: r\n})).filter(o => Number.isFinite(o.order_id));\n\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "node-load-known",
+      "name": "Load Known",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        860,
+        300
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT order_id, last_status, client_phone, order_type, welcome_sent_at, transit_sent_at, completed_at, feedback_sent_at FROM order_events WHERE last_status NOT IN ('completed','canceled') AND last_seen_at > NOW() - INTERVAL '7 days'",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-diff",
+      "name": "Compute Diff",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Дифф между текущим листингом и снимком из БД.\n// Читает оба источника через cross-references — так нода работает даже при\n// пустом входе (например, БД пустая → Load Known даёт 0 items).\n//\n// Возвращает массив items: одно событие = один item.\n// Если событий нет — возвращает один служебный item с _no_events=true,\n// чтобы downstream цепочка всегда получала входящие данные.\n\nconst listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\n\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\n\nconst events = [];\n\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      raw: o.raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nif (events.length === 0) {\n  return [{ json: { _no_events: true, listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\n\nreturn events.map(e => ({ json: e }));"
+      }
+    }
+  ],
+  "connections": {
+    "Every 15s": {
+      "main": [
+        [
+          {
+            "node": "Fetch Listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Listing": {
+      "main": [
+        [
+          {
+            "node": "Validate Listing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Listing": {
+      "main": [
+        [
+          {
+            "node": "Load Known",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Known": {
+      "main": [
+        [
+          {
+            "node": "Compute Diff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "18e4ab38-ca86-4229-8a64-43af1910179d",
+  "activeVersionId": null,
+  "versionCounter": 7,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-27T23:05:35.773Z",
+      "createdAt": "2026-04-27T23:05:35.773Z",
+      "role": "workflow:owner",
+      "workflowId": "bLhdS9V4FioCdVZI",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
