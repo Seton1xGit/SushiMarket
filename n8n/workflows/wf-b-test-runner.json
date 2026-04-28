@@ -1,0 +1,172 @@
+{
+  "updatedAt": "2026-04-28T00:15:17.291Z",
+  "createdAt": "2026-04-28T00:14:49.930Z",
+  "id": "0E5R5Wr7slLbkqtP",
+  "name": "wf-b-test-runner",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 900,
+        "height": 180,
+        "content": "## wf-b-test-runner — синтетический запуск WF-B\n\n**Что делает простым языком**\nКнопочный manual-runner для тестов WF-B без активации основного потока. Передаёт в WF-B заранее заданный payload `{order_id, client_phone, order_type}` через Execute Workflow — как это будет делать WF-A в проде.\n\n**Как пользоваться**\n1. Поправить значения в ноде «Test Payload» под нужный сценарий.\n2. Нажать «Execute Workflow» в UI. WF-B запустится, в БД появятся записи. WF-B остаётся `active: false`.\n\n**Удалить можно после готовности всего бэка** — в проде не нужен."
+      }
+    },
+    {
+      "id": "trig",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        320
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "payload",
+      "name": "Test Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Здесь задаётся синтетический payload для теста WF-B.\n// Менять значения для разных сценариев (delivery / pickup / no_phone и т.д.)\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1\n  }\n}];"
+      }
+    },
+    {
+      "id": "exec-b",
+      "name": "Run WF-B",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        320
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gm8yPsQ0vZA7yNx3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Test Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Payload": {
+      "main": [
+        [
+          {
+            "node": "Run WF-B",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "3ecccf18-3440-4513-9250-67331a9841b2",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-28T00:14:49.932Z",
+      "createdAt": "2026-04-28T00:14:49.932Z",
+      "role": "workflow:owner",
+      "workflowId": "0E5R5Wr7slLbkqtP",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

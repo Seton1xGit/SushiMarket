@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-27T23:32:05.258Z",
+  "updatedAt": "2026-04-28T00:11:53.451Z",
   "createdAt": "2026-04-27T23:05:37.156Z",
   "id": "gm8yPsQ0vZA7yNx3",
   "name": "wf-b-welcome",
@@ -18,13 +18,496 @@
       ],
       "parameters": {
         "color": 4,
-        "width": 1240,
-        "height": 240,
-        "content": "## WF-B · Welcome — приветствие при создании заказа (AC-1, AC-6)\n\n**Что делает простым языком**\nКогда WF-A видит новый заказ-доставку, он передаёт сюда `order_id` и `client_phone`. Этот WF:\n1. Проверяет в БД, что приветствие ещё не отправлено (идемпотентность).\n2. Идёт в публичный API DataFood, забирает детали заказа: блюда, сумму, адрес.\n3. Форматирует сообщение «Здравствуйте, ваш заказ #N принят…» со списком позиций.\n4. Отправляет в WhatsApp (или, пока WA не подключён, мокает запись в `notification_log`).\n5. В БД ставит `welcome_sent_at = NOW()`.\n\nЕсли заказ — самовывоз (`order_type ≠ delivery`) или у клиента нет валидного телефона → ничего не шлём. Во втором случае эскалируем в WF-E.\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT (idempotency) → HTTP GET `office-tr.sushi-market.com/api/app/v1/client/orders/get_for_phone` → Code (форматирование текста и списка блюд) → WhatsApp Cloud API (template `order_received_ru`) → Postgres UPDATE\nКреды: `cred_datafood_public`, `cred_postgres`, `cred_meta_whatsapp` (TBD).\n\n*Status:* пустой stub. Будет наполнен после WF-A Phase 2."
+        "width": 1880,
+        "height": 280,
+        "content": "## WF-B · Welcome — приветствие при создании заказа (AC-1, AC-6)\n\n**Что делает простым языком**\nКогда WF-A видит новый заказ-доставку, он передаёт сюда `order_id` и `client_phone`. Этот WF:\n1. Берёт состояние заказа из БД и проверяет: уже ли мы отправляли приветствие, доставка ли это (`order_type=1`).\n2. Проверяет валидность телефона (≥10 цифр). Если нет — эскалация в WF-E (`reason: no_phone`).\n3. Идёт в публичный API DataFood за деталями заказа: блюда, сумма, адрес.\n4. Форматирует сообщение «Здравствуйте, ваш заказ #N принят…» со списком позиций и суммой.\n5. **Если `Config.dry_run=true`** — пишет в `notification_log` без реальной отправки.\n   **Если `Config.dry_run=false`** — отправляет через WhatsApp Cloud API и логирует.\n6. В БД ставит `welcome_sent_at = NOW()` (идемпотентность).\n\nДля самовывоза (`order_type ≠ 1`) — early-return без отправки.\n\n**Тех стек**\nExecute Workflow trigger → Code Config → Postgres SELECT → IF (idempotency+delivery) → IF (phone valid) → HTTP GET get_for_phone → Code Format → IF dry_run → Postgres INSERT notification_log → Postgres UPDATE order_events\nКреды: `cred_datafood_public`, `cred_postgres`, `cred_meta_whatsapp` (TBD)."
+      }
+    },
+    {
+      "id": "node-trigger",
+      "name": "Receive Order",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        460
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_id",
+              "type": "number"
+            },
+            {
+              "name": "client_phone"
+            },
+            {
+              "name": "order_type",
+              "type": "number"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        460
+      ],
+      "parameters": {
+        "jsCode": "// Единая точка управления режимами WF-B.\n// dry_run=true → не шлём в WhatsApp реально, только пишем в notification_log.\n// Меняется одной строкой при переключении в production.\n//\n// Также прокидываем входные параметры дальше как $json для удобства.\n\nconst trig = $('Receive Order').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    order_type: Number(trig.order_type) || null\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-load-state",
+      "name": "Load Order State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        460
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT order_id, last_status, client_phone, order_type, welcome_sent_at FROM order_events WHERE order_id = $1::bigint LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-should-send",
+      "name": "Should Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        860,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery",
+              "leftValue": "={{ Number($('Config').first().json.order_type) }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "not-yet-sent",
+              "leftValue": "={{ $('Load Order State').first().json.welcome_sent_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-phone-valid",
+      "name": "Phone Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1080,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "phone-len",
+              "leftValue": "={{ ($('Config').first().json.client_phone || '').length }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-fetch-details",
+      "name": "Fetch Order Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1300,
+        280
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://office-tr.sushi-market.com/api/app/v1/client/orders/get_for_phone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "order_id",
+              "value": "={{ $('Config').first().json.order_id }}"
+            },
+            {
+              "name": "order_phone",
+              "value": "={{ $('Config').first().json.client_phone }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "tries": 2,
+            "waitBetweenTries": 1500
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OvipNoJ83kkncmrA",
+          "name": "cred_datafood_public"
+        }
+      }
+    },
+    {
+      "id": "node-format",
+      "name": "Format Welcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        280
+      ],
+      "parameters": {
+        "jsCode": "// Формирует приветственный текст из деталей заказа.\n// Если детали неполные — используем минимум.\n\nconst cfg = $('Config').first().json;\nconst details = $input.first()?.json || {};\nconst products = Array.isArray(details.products) ? details.products : [];\nconst subtotal = details.subtotal != null ? details.subtotal : null;\nconst paymentDelivery = details.payment_delivery != null ? Number(details.payment_delivery) : 0;\nconst total = subtotal != null ? Number(subtotal) + (paymentDelivery || 0) : null;\nconst shop = details.shop?.address || null;\nconst delivery = details.delivery?.address || null;\n\nconst lines = [];\nlines.push(`Здравствуйте! Ваш заказ #${cfg.order_id} принят.`);\nif (products.length) {\n  lines.push('');\n  lines.push('В составе:');\n  for (const p of products) {\n    const name = p.name || '?';\n    const cnt  = p.count || 1;\n    const ppu  = p.price_per_unit != null ? Number(p.price_per_unit) : 0;\n    lines.push(`• ${name} × ${cnt}${ppu ? ` — ${ppu * cnt}₺` : ''}`);\n  }\n}\nif (total != null) {\n  lines.push('');\n  lines.push(`Сумма: ${total}₺`);\n}\nif (delivery) {\n  lines.push('');\n  lines.push(`Доставим по адресу: ${delivery}`);\n}\nlines.push('');\nlines.push('Спасибо, что выбрали SushiMarket!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_received_ru',\n    text: lines.join('\\n'),\n    products_count: products.length,\n    total: total\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-dry-run",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1740,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-dry",
+              "leftValue": "={{ $('Config').first().json.dry_run }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-log-mock",
+      "name": "Log Mock Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1960,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log(order_id, template, channel, target_phone, success, error_text) VALUES ($1::bigint, $2, 'whatsapp', $3, false, 'dry_run')",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }},={{ $json.template }},={{ $json.client_phone || '-' }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-real-send-stub",
+      "name": "Real WA Send (stub)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Заглушка для production-отправки в WhatsApp Cloud API.\n// Будет заменена на узел WhatsApp Business Cloud, когда подключим cred_meta_whatsapp.\n// Пока: бросает ошибку, чтобы случайно не активировать без замены.\n\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+      }
+    },
+    {
+      "id": "node-mark-sent",
+      "name": "Mark Welcome Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2180,
+        280
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET welcome_sent_at = NOW() WHERE order_id = $1::bigint AND welcome_sent_at IS NULL RETURNING order_id",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-mark-no-phone",
+      "name": "Mark No Phone",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        540
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET escalated_no_phone_at = NOW() WHERE order_id = $1::bigint AND escalated_no_phone_at IS NULL",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-alert-no-phone",
+      "name": "Alert No Phone",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        540
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "O9Rt4HG7kDqxBrCv",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "reason": "no_phone",
+            "order_id": "={{ $('Config').first().json.order_id }}",
+            "error": "Client phone is missing or invalid",
+            "context": "={{ JSON.stringify({source:'WF-B', client_phone: $('Config').first().json.client_phone}) }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
       }
     }
   ],
-  "connections": {},
+  "connections": {
+    "Receive Order": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load Order State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order State": {
+      "main": [
+        [
+          {
+            "node": "Should Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send?": {
+      "main": [
+        [
+          {
+            "node": "Phone Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Phone Valid?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Order Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark No Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark No Phone": {
+      "main": [
+        [
+          {
+            "node": "Alert No Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Order Details": {
+      "main": [
+        [
+          {
+            "node": "Format Welcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Welcome": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Log Mock Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Real WA Send (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Mock Send": {
+      "main": [
+        [
+          {
+            "node": "Mark Welcome Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real WA Send (stub)": {
+      "main": [
+        [
+          {
+            "node": "Mark Welcome Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
   "settings": {
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false,
@@ -32,9 +515,9 @@
   },
   "staticData": null,
   "meta": null,
-  "versionId": "cac9fcb5-12fd-44f7-9964-a06d551aced6",
+  "versionId": "4319d990-4896-49b4-a197-f345f6206064",
   "activeVersionId": null,
-  "versionCounter": 3,
+  "versionCounter": 4,
   "triggerCount": 0,
   "shared": [
     {
