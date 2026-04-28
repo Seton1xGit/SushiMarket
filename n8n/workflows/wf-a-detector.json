@@ -506,7 +506,7 @@
         620
       ],
       "parameters": {
-        "jsCode": "const src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\nlet final;\nif (body.error) {\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\nreturn [{\n  json: {\n    order_id: orderId,\n    client_phone: src.client_phone,\n    client_name: src.client_name,\n    order_type: src.order_type,\n    final_status: final,\n    is_completed: final === 'completed',\n    completed_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Parse Final обрабатывает КАЖДЫЙ item Confirm Closed отдельно.\n// Источник order_id/client_* — соответствующий item Compute Diff (через itemMatching).\n\nconst items = $input.all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const body = items[i]?.json || {};\n  const src = $('Compute Diff').itemMatching(i)?.json || {};\n  const orderId = Number(src.order_id);\n  let final;\n  if (body.error) {\n    final = 'canceled';\n  } else {\n    const result = Array.isArray(body.result) ? body.result : [];\n    const row = result.find(r => Number(r.id) === orderId) || {};\n    final = String(row.status || 'canceled');\n  }\n  out.push({\n    json: {\n      order_id: orderId,\n      client_phone: src.client_phone,\n      client_name: src.client_name,\n      order_type: src.order_type,\n      final_status: final,\n      is_completed: final === 'completed',\n      completed_at: new Date().toISOString()\n    }\n  });\n}\nreturn out;"
       }
     },
     {
