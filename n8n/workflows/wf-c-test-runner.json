@@ -44,7 +44,7 @@
         320
       ],
       "parameters": {
-        "jsCode": "// Синтетический payload для теста WF-C.\n// to_status — то, что прислал бы WF-A; WF-C его не валидирует, доверяет триггеру.\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1,\n    to_status: 'Курьер в пути'\n  }\n}];"
+        "jsCode": "// Синтетический payload для теста WF-C.\n// to_status — то, что прислал бы WF-A; WF-C его не валидирует, доверяет триггеру.\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    client_name: 'Иван',\n    order_type: 1,\n    to_status: 'Курьер в пути'\n  }\n}];"
       }
     },
     {
@@ -67,6 +67,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}",
             "to_status": "={{ $json.to_status }}"
           },

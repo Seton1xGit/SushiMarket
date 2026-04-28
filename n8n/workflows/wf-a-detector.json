@@ -153,7 +153,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "const input = $input.first()?.json ?? {};\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: stripHtml(r.Status).slice(0, 100)\n})).filter(o => Number.isFinite(o.order_id));\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
+        "jsCode": "const input = $input.first()?.json ?? {};\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nfunction extractName(s) {\n  const stripped = stripHtml(s);\n  // Убираем телефон-подобные последовательности (8+ цифр со знаками-разделителями).\n  const noPhone = stripped.replace(/[\\d+\\-() ]{8,}/g, ' ').replace(/\\s+/g, ' ').trim();\n  return noPhone || null;\n}\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  client_name: extractName(r.ClientName),\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: stripHtml(r.Status).slice(0, 100)\n})).filter(o => Number.isFinite(o.order_id));\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
       }
     },
     {
@@ -168,7 +168,7 @@
       "alwaysOutputData": true,
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT order_id, last_status, client_phone, order_type, welcome_sent_at, transit_sent_at, completed_at, feedback_sent_at FROM order_events WHERE last_status NOT IN ('completed','canceled') AND last_seen_at > NOW() - INTERVAL '7 days'",
+        "query": "SELECT order_id, last_status, client_phone, client_name, order_type, welcome_sent_at, transit_sent_at, completed_at, feedback_sent_at FROM order_events WHERE last_status NOT IN ('completed','canceled') AND last_seen_at > NOW() - INTERVAL '7 days'",
         "options": {}
       },
       "credentials": {
@@ -188,7 +188,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "const listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\nconst events = [];\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\nreturn events.map(e => ({ json: e }));"
+        "jsCode": "const listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\nconst events = [];\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      client_name: k.client_name || null,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\nreturn events.map(e => ({ json: e }));"
       }
     },
     {
@@ -290,9 +290,9 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO order_events(order_id, client_phone, order_type, last_status, last_seen_at) VALUES ($1::bigint, NULLIF($2, '-'), NULLIF($3, 0)::smallint, $4, NOW()) ON CONFLICT (order_id) DO UPDATE SET last_status = EXCLUDED.last_status, last_seen_at = NOW(), client_phone = COALESCE(order_events.client_phone, EXCLUDED.client_phone)",
+        "query": "INSERT INTO order_events(order_id, client_phone, client_name, order_type, last_status, last_seen_at) VALUES ($1::bigint, NULLIF($2, '-'), NULLIF($3, '-'), NULLIF($4, 0)::smallint, $5, NOW()) ON CONFLICT (order_id) DO UPDATE SET last_status = EXCLUDED.last_status, last_seen_at = NOW(), client_phone = COALESCE(order_events.client_phone, EXCLUDED.client_phone), client_name = COALESCE(order_events.client_name, EXCLUDED.client_name)",
         "options": {
-          "queryReplacement": "={{ $json.order_id }},={{ $json.client_phone || '-' }},={{ Number($json.order_type) || 0 }},={{ $json.status_raw || '-' }}"
+          "queryReplacement": "={{ $json.order_id }},={{ $json.client_phone || '-' }},={{ ($json.client_name || '-').replace(/,/g, ' ') }},={{ Number($json.order_type) || 0 }},={{ $json.status_raw || '-' }}"
         }
       },
       "credentials": {
@@ -354,6 +354,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}"
           },
           "matchingColumns": [],
@@ -449,6 +450,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}",
             "to_status": "={{ $json.to_status }}"
           },
@@ -504,7 +506,7 @@
         620
       ],
       "parameters": {
-        "jsCode": "const src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\nlet final;\nif (body.error) {\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\nreturn [{\n  json: {\n    order_id: orderId,\n    client_phone: src.client_phone,\n    order_type: src.order_type,\n    final_status: final,\n    is_completed: final === 'completed',\n    completed_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\nlet final;\nif (body.error) {\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\nreturn [{\n  json: {\n    order_id: orderId,\n    client_phone: src.client_phone,\n    client_name: src.client_name,\n    order_type: src.order_type,\n    final_status: final,\n    is_completed: final === 'completed',\n    completed_at: new Date().toISOString()\n  }\n}];"
       }
     },
     {
@@ -593,6 +595,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}",
             "completed_at": "={{ $json.completed_at }}"
           },

@@ -43,6 +43,9 @@
               "name": "client_phone"
             },
             {
+              "name": "client_name"
+            },
+            {
               "name": "order_type",
               "type": "number"
             },
@@ -63,7 +66,7 @@
         480
       ],
       "parameters": {
-        "jsCode": "// Единая точка управления режимами WF-C.\n// dry_run=true → не шлём в WhatsApp, только пишем в notification_log.\n\nconst trig = $('Receive Status Change').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    order_type: Number(trig.order_type) || null,\n    to_status: String(trig.to_status || '')\n  }\n}];"
+        "jsCode": "// Единая точка управления режимами WF-C.\n// dry_run=true → не шлём в WhatsApp, только пишем в notification_log.\n\nconst trig = $('Receive Status Change').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    client_name: (trig.client_name && String(trig.client_name).trim()) || null,\n    order_type: Number(trig.order_type) || null,\n    to_status: String(trig.to_status || '')\n  }\n}];"
       }
     },
     {
@@ -299,7 +302,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "const cfg = $('Config').first().json;\nconst zone = $('Resolve Zone').first().json;\nconst eta = Number($input.first()?.json?.minutes) || 0;\n\nconst lines = [];\nlines.push(`Ваш заказ #${cfg.order_id} в пути.`);\nlines.push('');\nlines.push(`Курьер уже выехал — ориентировочно ${eta} мин.`);\nif (zone.delivery_address) {\n  lines.push('');\n  lines.push(`Адрес доставки: ${zone.delivery_address}`);\n}\nlines.push('');\nlines.push('Спасибо за заказ!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_in_transit_ru',\n    text: lines.join('\\n'),\n    eta_minutes: eta,\n    zone_id: zone.zone_id,\n    zone_source: zone.zone_source\n  }\n}];"
+        "jsCode": "const cfg = $('Config').first().json;\nconst zone = $('Resolve Zone').first().json;\nconst eta = Number($input.first()?.json?.minutes) || 0;\nconst greeting = cfg.client_name ? `Здравствуйте, ${cfg.client_name}!` : 'Здравствуйте!';\n\nconst lines = [];\nlines.push(`${greeting} Ваш заказ #${cfg.order_id} в пути.`);\nlines.push('');\nlines.push(`Курьер уже выехал — ориентировочно ${eta} мин.`);\nif (zone.delivery_address) {\n  lines.push('');\n  lines.push(`Адрес доставки: ${zone.delivery_address}`);\n}\nlines.push('');\nlines.push('Спасибо, что выбрали SushiMarket!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_in_transit_ru',\n    text: lines.join('\\n'),\n    eta_minutes: eta,\n    zone_id: zone.zone_id,\n    zone_source: zone.zone_source\n  }\n}];"
       }
     },
     {

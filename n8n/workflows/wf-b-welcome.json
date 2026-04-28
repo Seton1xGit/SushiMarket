@@ -43,6 +43,9 @@
               "name": "client_phone"
             },
             {
+              "name": "client_name"
+            },
+            {
               "name": "order_type",
               "type": "number"
             }
@@ -60,7 +63,7 @@
         460
       ],
       "parameters": {
-        "jsCode": "// Единая точка управления режимами WF-B.\n// dry_run=true → не шлём в WhatsApp реально, только пишем в notification_log.\n// Меняется одной строкой при переключении в production.\n//\n// Также прокидываем входные параметры дальше как $json для удобства.\n\nconst trig = $('Receive Order').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    order_type: Number(trig.order_type) || null\n  }\n}];"
+        "jsCode": "// Единая точка управления режимами WF-B.\n// dry_run=true → не шлём в WhatsApp реально, только пишем в notification_log.\n// Меняется одной строкой при переключении в production.\n\nconst trig = $('Receive Order').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    client_name: (trig.client_name && String(trig.client_name).trim()) || null,\n    order_type: Number(trig.order_type) || null\n  }\n}];"
       }
     },
     {
@@ -219,7 +222,7 @@
         280
       ],
       "parameters": {
-        "jsCode": "// Формирует приветственный текст из деталей заказа.\n// Если детали неполные — используем минимум.\n\nconst cfg = $('Config').first().json;\nconst details = $input.first()?.json || {};\nconst products = Array.isArray(details.products) ? details.products : [];\nconst subtotal = details.subtotal != null ? details.subtotal : null;\nconst paymentDelivery = details.payment_delivery != null ? Number(details.payment_delivery) : 0;\nconst total = subtotal != null ? Number(subtotal) + (paymentDelivery || 0) : null;\nconst shop = details.shop?.address || null;\nconst delivery = details.delivery?.address || null;\n\nconst lines = [];\nlines.push(`Здравствуйте! Ваш заказ #${cfg.order_id} принят.`);\nif (products.length) {\n  lines.push('');\n  lines.push('В составе:');\n  for (const p of products) {\n    const name = p.name || '?';\n    const cnt  = p.count || 1;\n    const ppu  = p.price_per_unit != null ? Number(p.price_per_unit) : 0;\n    lines.push(`• ${name} × ${cnt}${ppu ? ` — ${ppu * cnt}₺` : ''}`);\n  }\n}\nif (total != null) {\n  lines.push('');\n  lines.push(`Сумма: ${total}₺`);\n}\nif (delivery) {\n  lines.push('');\n  lines.push(`Доставим по адресу: ${delivery}`);\n}\nlines.push('');\nlines.push('Спасибо, что выбрали SushiMarket!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_received_ru',\n    text: lines.join('\\n'),\n    products_count: products.length,\n    total: total\n  }\n}];"
+        "jsCode": "// Формирует приветственный текст из деталей заказа.\n\nconst cfg = $('Config').first().json;\nconst details = $input.first()?.json || {};\nconst products = Array.isArray(details.products) ? details.products : [];\nconst subtotal = details.subtotal != null ? details.subtotal : null;\nconst paymentDelivery = details.payment_delivery != null ? Number(details.payment_delivery) : 0;\nconst total = subtotal != null ? Number(subtotal) + (paymentDelivery || 0) : null;\nconst delivery = details.delivery?.address || null;\nconst greeting = cfg.client_name ? `Здравствуйте, ${cfg.client_name}!` : 'Здравствуйте!';\n\nconst lines = [];\nlines.push(`${greeting} Ваш заказ #${cfg.order_id} принят.`);\nif (products.length) {\n  lines.push('');\n  lines.push('В составе:');\n  for (const p of products) {\n    const name = p.name || '?';\n    const cnt  = p.count || 1;\n    const ppu  = p.price_per_unit != null ? Number(p.price_per_unit) : 0;\n    lines.push(`• ${name} × ${cnt}${ppu ? ` — ${ppu * cnt}₺` : ''}`);\n  }\n}\nif (total != null) {\n  lines.push('');\n  lines.push(`Сумма: ${total}₺`);\n}\nif (delivery) {\n  lines.push('');\n  lines.push(`Доставим по адресу: ${delivery}`);\n}\nlines.push('');\nlines.push('Спасибо, что выбрали SushiMarket!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_received_ru',\n    text: lines.join('\\n'),\n    products_count: products.length,\n    total: total\n  }\n}];"
       }
     },
     {

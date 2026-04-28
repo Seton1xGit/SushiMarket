@@ -44,7 +44,7 @@
         320
       ],
       "parameters": {
-        "jsCode": "// Здесь задаётся синтетический payload для теста WF-B.\n// Менять значения для разных сценариев (delivery / pickup / no_phone и т.д.)\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1\n  }\n}];"
+        "jsCode": "// Здесь задаётся синтетический payload для теста WF-B.\n// Менять значения для разных сценариев (delivery / pickup / no_phone и т.д.)\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    client_name: 'Иван',\n    order_type: 1\n  }\n}];"
       }
     },
     {
@@ -67,6 +67,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}"
           },
           "matchingColumns": [],

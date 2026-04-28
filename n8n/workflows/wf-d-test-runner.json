@@ -44,7 +44,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "// Поменять mode для разных сценариев:\n//   'within' — completed_at был 119 минут назад, target ≈ NOW+1мин, в окне.\n//   'late'   — completed_at сегодня в 21:30 Istanbul, target=23:30, за окном.\nconst mode = 'within';\n\nconst now = new Date();\nlet completedAt;\nif (mode === 'late') {\n  // Сегодня 21:30 Europe/Istanbul (UTC+3) → 18:30 UTC.\n  const todayIst = new Date(now.getTime() + 3 * 3600 * 1000);\n  const y = todayIst.getUTCFullYear();\n  const m = String(todayIst.getUTCMonth() + 1).padStart(2, '0');\n  const d = String(todayIst.getUTCDate()).padStart(2, '0');\n  completedAt = new Date(`${y}-${m}-${d}T21:30:00+03:00`).toISOString();\n} else {\n  // 119 минут назад от NOW.\n  completedAt = new Date(now.getTime() - 119 * 60 * 1000).toISOString();\n}\n\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1,\n    completed_at: completedAt,\n    _mode: mode\n  }\n}];"
+        "jsCode": "// Поменять mode для разных сценариев:\n//   'within' — completed_at был 119 минут назад, target ≈ NOW+1мин, в окне.\n//   'late'   — completed_at сегодня в 21:30 Istanbul, target=23:30, за окном.\nconst mode = 'within';\n\nconst now = new Date();\nlet completedAt;\nif (mode === 'late') {\n  // Сегодня 21:30 Europe/Istanbul (UTC+3) → 18:30 UTC.\n  const todayIst = new Date(now.getTime() + 3 * 3600 * 1000);\n  const y = todayIst.getUTCFullYear();\n  const m = String(todayIst.getUTCMonth() + 1).padStart(2, '0');\n  const d = String(todayIst.getUTCDate()).padStart(2, '0');\n  completedAt = new Date(`${y}-${m}-${d}T21:30:00+03:00`).toISOString();\n} else {\n  // 119 минут назад от NOW.\n  completedAt = new Date(now.getTime() - 119 * 60 * 1000).toISOString();\n}\n\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    client_name: 'Иван',\n    order_type: 1,\n    completed_at: completedAt,\n    _mode: mode\n  }\n}];"
       }
     },
     {
@@ -67,6 +67,7 @@
           "value": {
             "order_id": "={{ $json.order_id }}",
             "client_phone": "={{ $json.client_phone }}",
+            "client_name": "={{ $json.client_name }}",
             "order_type": "={{ $json.order_type }}",
             "completed_at": "={{ $json.completed_at }}"
           },
