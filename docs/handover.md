@@ -29,7 +29,6 @@
 |--------|-----------|-----------|
 | GitHub | доступ к репо `Seton1xGit/SushiMarket` | передаётся как collaborator текущим владельцем (см. §6) |
 | n8n | логин на `https://n8n.thefreedom.pro` (email + password) | передаётся текущим владельцем; смотри §3 |
-| n8n API key | JWT для n8n-cli | создаётся в n8n UI: Settings → n8n API → Create API key |
 | Supabase | доступ к Postgres-инстансу `SushiMarket` | передаётся как collaborator org `Seton1xGit's Org` или новый владелец заводит свой проект и переносит схему |
 | DataFood public API | `DATAFOOD_PUBLIC_TOKEN` (Bearer) | владелец интеграции SushiMarket / DataFood; на 2026-04-27 действует токен `f81833f6-…` |
 | Admin-API call-center | `CALLCENTER_ADMIN_TOKEN` (Sanctum personal-access-token) | через DevTools браузера админки `call-center-tr.sushi-market.com` (вкладка Network → любой XHR-запрос → заголовок Authorization). Привязан к учётке, под которой залогинен |
@@ -97,7 +96,7 @@ cp .env.example .env
 ### 3.1 Хостинг
 
 - URL: **https://n8n.thefreedom.pro**
-- Версия n8n: см. в UI (нижний-правый угол) или через `n8n-cli` (значение TBD-5 в [PLAN.md](../PLAN.md)).
+- Версия n8n: см. в UI (нижний-правый угол).
 - Доступ: email + password (см. §1).
 - Хостинг и обновления — на стороне владельца домена `thefreedom.pro`. Если он перестанет работать или снимут доступ — придётся поднимать свой n8n (рекомендация: Oracle Cloud Always-Free ARM VM + Docker Compose `caddy + n8n + postgres`).
 
@@ -127,84 +126,34 @@ URL каждого: `https://n8n.thefreedom.pro/workflow/<id>`.
 | `cred_meta_whatsapp`    | (TBD)              | whatsAppApi или httpHeaderAuth | Bearer от Meta + Phone-Number-ID |
 | `cred_telegram_bot`     | `z27hahzThmGfBRup` | telegramApi    | Bot @SushiMarketAlert_bot, chat_id админа `5150596167` |
 
-**Воссоздание на другом инстансе** — см. §3.6.
+**Воссоздание на другом инстансе** — см. §3.5.
 
-### 3.4 n8n-cli (рекомендуется для администрирования)
+### 3.4 Экспорт и коммит workflow
 
-CLI-инструмент: https://github.com/Yarrroo/n8n-cli. Позволяет управлять workflow/credentials/executions из командной строки и из Claude Code.
+После любых изменений в UI n8n — экспорт workflow в JSON и коммит:
 
-Установка и подключение (один раз):
+1. В UI n8n: правый-верхний угол workflow → меню (три точки) → **Download** → JSON.
+2. Положить файл в `n8n/workflows/<name>.json` (имя должно совпадать с workflow в n8n).
+3. `git add n8n/workflows/ && git commit -m "Update n8n workflow X" && git push`.
 
-```bash
-# 1. установка
-pipx install git+https://github.com/Yarrroo/n8n-cli.git
+В экспорте credentials указаны **по имени**, а не по ID — это позволяет импортировать workflow на любом инстансе, где созданы credentials с теми же именами (см. §3.3 и §3.5).
 
-# 2. интеграция в Claude Code (опционально)
-n8n-cli setup install
-
-# 3. подключение к инстансу
-n8n-cli instance add prod \
-  --url https://n8n.thefreedom.pro \
-  --api-key <JWT_от_n8n_API> \
-  --use
-
-# 4. логин фронт-сессии (нужен для folders / credentials list / execute)
-$env:N8N_PASSWORD='<пароль>'
-n8n-cli auth login --email <email>
-Remove-Item Env:\N8N_PASSWORD
-```
-
-Проверка:
-
-```bash
-n8n-cli auth status
-n8n-cli workflow list --folder Mpxn58SJCdmP9y14 --project 4P7y04n69k3wJV0z
-```
-
-### 3.5 Экспорт и коммит workflow
-
-После любых изменений в UI n8n — экспорт в `n8n/workflows/`:
-
-```bash
-mkdir -p n8n/workflows
-n8n-cli workflow export bLhdS9V4FioCdVZI --output n8n/workflows/wf-a-detector.json
-n8n-cli workflow export gm8yPsQ0vZA7yNx3 --output n8n/workflows/wf-b-welcome.json
-n8n-cli workflow export NFKSGYx8koD1V55o --output n8n/workflows/wf-c-in-transit.json
-n8n-cli workflow export KeQBljsKESqkPTX3 --output n8n/workflows/wf-d-nps.json
-n8n-cli workflow export O9Rt4HG7kDqxBrCv --output n8n/workflows/wf-e-alerter.json
-git add n8n/workflows/
-git commit -m "Update n8n workflows"
-git push
-```
-
-В экспорте credentials указаны **по имени**, а не по ID — это позволит импортировать workflow на любом инстансе, где создадены credentials с теми же именами (см. §3.3 и §3.6).
-
-### 3.6 Восстановление n8n с нуля
+### 3.5 Восстановление n8n с нуля
 
 Сценарий: новый владелец поднимает свой n8n, или текущий упал.
 
-1. Поднять n8n (свой VPS / Oracle Free / n8n Cloud — без разницы).
-2. Создать API key: Settings → n8n API → Create.
-3. Подключить `n8n-cli` (см. §3.4).
-4. **Создать 5 credentials с теми же именами** через UI или `n8n-cli credential add`:
-   ```bash
-   n8n-cli credential add --type httpHeaderAuth --name "cred_callcenter_admin" \
-     --data '{"name":"Authorization","value":"Bearer <CALLCENTER_ADMIN_TOKEN>"}'
-   n8n-cli credential add --type httpHeaderAuth --name "cred_datafood_public" \
-     --data '{"name":"Authorization","value":"Bearer <DATAFOOD_PUBLIC_TOKEN>"}'
-   n8n-cli credential add --type postgres --name "cred_postgres" \
-     --data '{"host":"...","port":6543,"database":"postgres","user":"...","password":"...","allowUnauthorizedCerts":true,"sshTunnel":false}'
-   # Замечание: allowUnauthorizedCerts=true обязателен для Supabase pooler, иначе n8n рвёт TLS handshake с self-signed certificate chain. Поле ssl при этом ОТСУТСТВУЕТ — схема credential его запрещает, когда allowUnauthorizedCerts=true.
-   # cred_meta_whatsapp и cred_telegram_bot — по факту наличия аккаунтов
-   ```
-5. Создать папку `SushiMarket` и импортировать workflow:
-   ```bash
-   n8n-cli folder add --name SushiMarket --project <PROJECT_ID>
-   for f in n8n/workflows/*.json; do
-     n8n-cli workflow import --file "$f" --folder <FOLDER_ID>
-   done
-   ```
-6. Проверить и активировать workflow по очереди (см. §5).
+1. **Поднять n8n** (свой VPS / Oracle Free Tier / n8n Cloud — без разницы).
+2. **Создать в n8n проект и папку** `SushiMarket` (UI: Projects → создать проект → внутри проекта создать папку).
+3. **Создать 5 credentials** через UI с именно теми именами (workflow.json ссылается на credentials по имени):
+   - `cred_callcenter_admin` — тип **Header Auth**, поля: name=`Authorization`, value=`Bearer <CALLCENTER_ADMIN_TOKEN>`.
+   - `cred_datafood_public` — тип **Header Auth**, поля: name=`Authorization`, value=`Bearer <DATAFOOD_PUBLIC_TOKEN>`.
+   - `cred_postgres` — тип **Postgres**, поля: host, port=6543, database, user, password, **`Ignore SSL Issues` = ON** (галочка). Поле SSL Mode оставить пустым.
+
+     Почему `Ignore SSL Issues`: Supabase pooler даёт self-signed cert chain, который n8n по умолчанию не доверяет. Без этой галочки коннект падает с `self-signed certificate in certificate chain`.
+   - `cred_meta_whatsapp` — по факту наличия Meta WABA.
+   - `cred_telegram_bot` — тип **Telegram**, поле Access Token = bot token от @BotFather.
+4. **Импортировать 5 workflow**: для каждого `n8n/workflows/*.json` — UI: Workflows → Import from file → выбрать JSON → переместить в папку SushiMarket.
+5. **Проверить и активировать workflow по очереди** в порядке §5.
 
 ---
 
@@ -283,7 +232,7 @@ print('OK')
 
 1. Supabase Dashboard → Project Settings → Database → **Reset database password**.
 2. Обновить `POSTGRES_DSN` в локальном `.env` (с percent-encoding для спецсимволов: `*`→`%2A`, `@`→`%40` и т.д.).
-3. В n8n: `n8n-cli credential patch <ID> --data '{"password":"<новый>"}'` (только поле password) или через UI.
+3. В n8n UI: Credentials → `cred_postgres` → обновить поле `password` → Save.
 4. Перезапустить активные workflow, чтобы они подхватили новый пароль.
 
 ---
@@ -358,9 +307,7 @@ print('OK')
 
 **B. Переезд на свой n8n у нового владельца** — новый поднимает n8n (Oracle Free ARM VM или другой) → §3.6 «Восстановление с нуля».
 
-В обоих случаях:
-1. Новый владелец создаёт API key.
-2. Перепривязывает `n8n-cli` через `instance add`.
+В обоих случаях новый владелец логинится в UI n8n под своим email/паролем — этого достаточно для работы.
 
 ### Шаг 4. DataFood токены
 - `DATAFOOD_PUBLIC_TOKEN` — связаться с владельцем интеграции SushiMarket/DataFood, попросить выдать токен на нового пользователя (или сохранить старый).
@@ -377,12 +324,11 @@ print('OK')
 
 ### Шаг 7. Финальная проверка
 
-1. `n8n-cli auth status` — обе авторизации зелёные.
-2. `n8n-cli workflow list --folder <ID>` — все 5 workflow видны.
-3. SQL-проверка: `SELECT COUNT(*) FROM order_events;` — должна вернуть число.
-4. Активировать WF-E → отправить тестовый алерт через manual run → пришло в Telegram.
-5. Активировать WF-A → подождать 30 секунд → проверить, что в `order_events` появилась запись.
-6. Дождаться или симулировать переход статуса → должно прийти WA.
+1. UI n8n: видны все 5 workflow в папке SushiMarket, у каждого корректные credentials (без красных значков).
+2. SQL-проверка: `SELECT COUNT(*) FROM order_events;` — возвращает число (0 или больше).
+3. Активировать WF-E → выполнить тестовый run (Test workflow в UI) → пришло сообщение в Telegram админ-канал.
+4. Активировать WF-A → подождать 30 секунд → проверить, что в `order_events` появляются записи.
+5. Дождаться или симулировать переход статуса → должно прийти WA-сообщение клиенту (только если `META_DRY_RUN=false`).
 
 ---
 
