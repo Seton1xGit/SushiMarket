@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-04-27T23:32:06.604Z",
+  "updatedAt": "2026-04-28T00:21:55.428Z",
   "createdAt": "2026-04-27T23:05:38.380Z",
   "id": "NFKSGYx8koD1V55o",
   "name": "wf-c-in-transit",
@@ -18,13 +18,616 @@
       ],
       "parameters": {
         "color": 4,
-        "width": 1240,
-        "height": 260,
-        "content": "## WF-C · InTransit — «курьер выехал» (AC-2, AC-7)\n\n**Что делает простым языком**\nКогда WF-A замечает переход статуса заказа в `courier_delivers_an_order` (курьер взял заказ и поехал к клиенту), он передаёт сюда `order_id`. Этот WF:\n1. Проверяет в БД, что сообщение «в пути» ещё не отправлялось.\n2. Идёт в публичный API DataFood за деталями заказа (адрес, зона доставки).\n3. Узнаёт `customDeliveryTime` для зоны заказа — это и есть ETA в минутах.\n4. Если для зоны время **не настроено** → `transit_skipped=true`, ничего не шлём, эскалация в WF-E.\n5. Если настроено → отправляет WA «Курьер выехал, ориентировочно XX минут» и пишет `transit_sent_at`.\n\nДля самовывоза этот WF не вызывается — у pickup'а нет статуса «курьер в пути».\n\n**Тех стек**\nExecute Workflow trigger → Postgres SELECT → HTTP GET `…/v1/client/orders/get_for_phone` → Code (извлечь zone_id — TBD-2) → HTTP GET `…/v1/get_custom_delivery_time/{zone}` → IF (minutes is set?) → WhatsApp Cloud API (template `order_in_transit_ru`) → Postgres UPDATE\nКреды: `cred_datafood_public`, `cred_postgres`, `cred_meta_whatsapp` (TBD).\n\n*Status:* пустой stub. Будет наполнен после WF-A Phase 2."
+        "width": 2120,
+        "height": 280,
+        "content": "## WF-C · InTransit — «курьер в пути» (AC-2, AC-7)\n\n**Что делает простым языком**\nКогда WF-A видит переход статуса в «доставляется/курьер выехал», он зовёт сюда. WF-C:\n1. Берёт состояние из БД, проверяет: доставка ли (`order_type=1`), не отправляли ли уже (`transit_sent_at IS NULL`).\n2. Идёт за деталями заказа в публичный API → пытается определить `zone_id` (TBD-2: пробуем `delivery.zone_id`, `delivery.zone`, `shop.zone_id`, в последнюю очередь — `shop.id` как heuristic).\n3. Дёргает `/v1/get_custom_delivery_time/{zone}` за ETA в минутах.\n4. Если ETA нашёлся — формирует «Курьер выехал, ~XX мин» и (в dry-run) пишет в `notification_log`. Если нет — `transit_skipped=true` + эскалация в WF-E (`zone_not_configured`).\n5. Ставит `transit_sent_at = NOW()`.\n\n**Тех стек**\nExecute Workflow trigger → Code Config → Postgres SELECT → IF (idempotency+delivery) → HTTP GET get_for_phone → Code Resolve Zone → HTTP GET get_custom_delivery_time/{zone} (onError continue) → IF (minutes set?) → Code Format → IF dry_run → Postgres INSERT/UPDATE\nКреды: `cred_datafood_public`, `cred_postgres`, `cred_meta_whatsapp` (TBD)."
+      }
+    },
+    {
+      "id": "node-trigger",
+      "name": "Receive Status Change",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        480
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_id",
+              "type": "number"
+            },
+            {
+              "name": "client_phone"
+            },
+            {
+              "name": "order_type",
+              "type": "number"
+            },
+            {
+              "name": "to_status"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Единая точка управления режимами WF-C.\n// dry_run=true → не шлём в WhatsApp, только пишем в notification_log.\n\nconst trig = $('Receive Status Change').first().json;\n\nreturn [{\n  json: {\n    dry_run: true,\n    order_id: Number(trig.order_id),\n    client_phone: String(trig.client_phone || '').replace(/[^0-9]/g, ''),\n    order_type: Number(trig.order_type) || null,\n    to_status: String(trig.to_status || '')\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-load-state",
+      "name": "Load Order State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        640,
+        480
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT order_id, last_status, client_phone, order_type, transit_sent_at, transit_skipped FROM order_events WHERE order_id = $1::bigint LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-should-send",
+      "name": "Should Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        860,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery",
+              "leftValue": "={{ Number($('Config').first().json.order_type) }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "not-yet-sent",
+              "leftValue": "={{ $('Load Order State').first().json.transit_sent_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-fetch-details",
+      "name": "Fetch Order Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1080,
+        380
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://office-tr.sushi-market.com/api/app/v1/client/orders/get_for_phone",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "order_id",
+              "value": "={{ $('Config').first().json.order_id }}"
+            },
+            {
+              "name": "order_phone",
+              "value": "={{ $('Config').first().json.client_phone }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000,
+          "retry": {
+            "tries": 2,
+            "waitBetweenTries": 1500
+          },
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OvipNoJ83kkncmrA",
+          "name": "cred_datafood_public"
+        }
+      }
+    },
+    {
+      "id": "node-resolve-zone",
+      "name": "Resolve Zone",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        380
+      ],
+      "parameters": {
+        "jsCode": "// TBD-2: явного zone_id в публичном API мы не нашли.\n// Пробуем цепочку кандидатов; первый существующий и > 0 берём как zone_id.\n// Если ни один не найден — zone=null, дальше пойдём по skip-ветке.\n//\n// Если в продакшене окажется, что zone берётся из другого места —\n// поменять список candidates.\n\nconst d = $input.first()?.json || {};\nconst candidates = [\n  d?.delivery?.zone_id,\n  d?.delivery?.zone,\n  d?.zone_id,\n  d?.zone,\n  d?.shop?.zone_id,\n  d?.shop?.zone,\n  d?.shop?.id          // эвристика: shop.id как proxy для zone\n];\nconst zone = candidates.find(v => v != null && Number(v) > 0);\n\nconst cfg = $('Config').first().json;\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    zone_id: zone ? Number(zone) : null,\n    zone_source: zone == null ? 'none' :\n      (d?.delivery?.zone_id ? 'delivery.zone_id' :\n       d?.delivery?.zone ? 'delivery.zone' :\n       d?.zone_id ? 'zone_id' :\n       d?.zone ? 'zone' :\n       d?.shop?.zone_id ? 'shop.zone_id' :\n       d?.shop?.zone ? 'shop.zone' : 'shop.id_fallback'),\n    delivery_address: d?.delivery?.address || null,\n    shop_address: d?.shop?.address || null\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-have-zone",
+      "name": "Zone Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-zone",
+              "leftValue": "={{ Number($json.zone_id) || 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-fetch-eta",
+      "name": "Get Delivery Time",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1740,
+        280
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "=https://office-tr.sushi-market.com/api/app/v1/get_custom_delivery_time/{{ $json.zone_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "OvipNoJ83kkncmrA",
+          "name": "cred_datafood_public"
+        }
+      }
+    },
+    {
+      "id": "node-have-eta",
+      "name": "Have ETA?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1960,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "minutes-set",
+              "leftValue": "={{ Number($json.minutes) || 0 }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-format",
+      "name": "Format InTransit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        200
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst zone = $('Resolve Zone').first().json;\nconst eta = Number($input.first()?.json?.minutes) || 0;\n\nconst lines = [];\nlines.push(`Ваш заказ #${cfg.order_id} в пути.`);\nlines.push('');\nlines.push(`Курьер уже выехал — ориентировочно ${eta} мин.`);\nif (zone.delivery_address) {\n  lines.push('');\n  lines.push(`Адрес доставки: ${zone.delivery_address}`);\n}\nlines.push('');\nlines.push('Спасибо за заказ!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'order_in_transit_ru',\n    text: lines.join('\\n'),\n    eta_minutes: eta,\n    zone_id: zone.zone_id,\n    zone_source: zone.zone_source\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-dry-run",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2400,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-dry",
+              "leftValue": "={{ $('Config').first().json.dry_run }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-log-mock",
+      "name": "Log Mock Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2620,
+        120
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log(order_id, template, channel, target_phone, success, error_text) VALUES ($1::bigint, $2, 'whatsapp', $3, false, 'dry_run')",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }},={{ $json.template }},={{ $json.client_phone || '-' }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-real-send-stub",
+      "name": "Real WA Send (stub)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2620,
+        280
+      ],
+      "parameters": {
+        "jsCode": "// Stub реальной WA-отправки. См. WF-B note.\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+      }
+    },
+    {
+      "id": "node-mark-sent",
+      "name": "Mark Transit Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2840,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET transit_sent_at = NOW() WHERE order_id = $1::bigint AND transit_sent_at IS NULL",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-mark-skipped",
+      "name": "Mark Transit Skipped",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1740,
+        540
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET transit_skipped = TRUE WHERE order_id = $1::bigint",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-alert-zone",
+      "name": "Alert Zone Missing",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        540
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "O9Rt4HG7kDqxBrCv",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "reason": "zone_not_configured",
+            "order_id": "={{ $('Config').first().json.order_id }}",
+            "error": "ETA could not be determined for this order",
+            "context": "={{ JSON.stringify({source:'WF-C', zone_source: $('Resolve Zone').first()?.json?.zone_source, zone_id: $('Resolve Zone').first()?.json?.zone_id}) }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
       }
     }
   ],
-  "connections": {},
+  "connections": {
+    "Receive Status Change": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Load Order State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order State": {
+      "main": [
+        [
+          {
+            "node": "Should Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Order Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Fetch Order Details": {
+      "main": [
+        [
+          {
+            "node": "Resolve Zone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Zone": {
+      "main": [
+        [
+          {
+            "node": "Zone Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zone Found?": {
+      "main": [
+        [
+          {
+            "node": "Get Delivery Time",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Transit Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Delivery Time": {
+      "main": [
+        [
+          {
+            "node": "Have ETA?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Have ETA?": {
+      "main": [
+        [
+          {
+            "node": "Format InTransit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Transit Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Transit Skipped": {
+      "main": [
+        [
+          {
+            "node": "Alert Zone Missing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format InTransit": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Log Mock Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Real WA Send (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Mock Send": {
+      "main": [
+        [
+          {
+            "node": "Mark Transit Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real WA Send (stub)": {
+      "main": [
+        [
+          {
+            "node": "Mark Transit Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
   "settings": {
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false,
@@ -32,9 +635,9 @@
   },
   "staticData": null,
   "meta": null,
-  "versionId": "76475284-999b-44a5-8fb0-67a88a2b5bdf",
+  "versionId": "2e2640a7-754b-4854-9692-fe40c096e028",
   "activeVersionId": null,
-  "versionCounter": 3,
+  "versionCounter": 5,
   "triggerCount": 0,
   "shared": [
     {

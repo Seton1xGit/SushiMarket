@@ -241,7 +241,9 @@ ETA для AC-2: вызываем `get_custom_delivery_time/{zone}`. Если о
 3. Пользователь явно подтвердил активацию.
 
 Во время разработки:
-- Все WF держим `active: false` (создаются по умолчанию неактивными; проверяется в UI n8n — переключатель Active в правом верхнем углу workflow).
+- **WF-A** (с Schedule trigger) держим `active: false` до полной готовности всего бэка — он сам триггерится по расписанию каждые 15с и был бы реальным polling'ом.
+- **WF-B / WF-C / WF-D / WF-E** (только Execute Workflow trigger, не самозапускаются) можно держать `active: true` — это нужно, чтобы их можно было звать из других workflow (Execute Workflow node на современных n8n требует target=active). Сами по себе они ничего не делают.
+- **Тест-runner'ы** (Manual trigger, не самозапускаются) — `active: true` или `false` не имеет значения.
 - Manual run (`workflow execute`) допускается **только** на WF, которые не отправляют реальных сообщений клиентам или используют dry-run mode.
 - WhatsApp Cloud API в коде нод **по умолчанию dry-run**: вместо HTTP к Meta — INSERT в `notification_log` с `success=false, error_text='dry_run', payload=<сообщение>`. Реальная отправка включается единым флажком (`META_DRY_RUN=true|false` в env, или ENV-condition в IF-ноде перед каждым WA Send).
 - Telegram-алертер (WF-E) идёт в личный chat_id админа — это разрешено и не затрагивает клиентов.

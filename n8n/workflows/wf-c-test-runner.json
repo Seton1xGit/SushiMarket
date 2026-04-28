@@ -1,0 +1,173 @@
+{
+  "updatedAt": "2026-04-28T00:22:37.000Z",
+  "createdAt": "2026-04-28T00:22:04.215Z",
+  "id": "2hqo9MVxdxwEVmPd",
+  "name": "wf-c-test-runner",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 900,
+        "height": 180,
+        "content": "## wf-c-test-runner — синтетический запуск WF-C\n\n**Что делает простым языком**\nКнопочный manual-runner для тестов WF-C без активации основного потока. Передаёт в WF-C заранее заданный payload `{order_id, client_phone, order_type, to_status}` через Execute Workflow.\n\n**Как пользоваться**\n1. Поправить значения в ноде «Test Payload» под нужный сценарий (есть ли заказ в БД, его order_type, что в `to_status`).\n2. Перед запуском убедиться, что в `order_events` есть строка для `order_id` (без неё Load Order State вернёт пусто и Should Send? уйдёт в FALSE).\n3. Нажать «Execute Workflow». В `notification_log` должна появиться dry_run-запись или transit_skipped.\n\n**Удалить можно после готовности всего бэка** — в проде не нужен."
+      }
+    },
+    {
+      "id": "trig",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        320
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "payload",
+      "name": "Test Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        320
+      ],
+      "parameters": {
+        "jsCode": "// Синтетический payload для теста WF-C.\n// to_status — то, что прислал бы WF-A; WF-C его не валидирует, доверяет триггеру.\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1,\n    to_status: 'Курьер в пути'\n  }\n}];"
+      }
+    },
+    {
+      "id": "exec-c",
+      "name": "Run WF-C",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        320
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "NFKSGYx8koD1V55o",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}",
+            "to_status": "={{ $json.to_status }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Test Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Payload": {
+      "main": [
+        [
+          {
+            "node": "Run WF-C",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "f0372458-7851-4dc3-a10d-611976b86675",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-28T00:22:04.216Z",
+      "createdAt": "2026-04-28T00:22:04.216Z",
+      "role": "workflow:owner",
+      "workflowId": "2hqo9MVxdxwEVmPd",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
