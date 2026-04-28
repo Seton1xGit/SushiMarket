@@ -290,6 +290,20 @@ print('OK')
 
 ## 5. Запуск и эксплуатация
 
+### 5.0 Safety: dry-run и правила активации
+
+**Жёсткое правило (зафиксировано 2026-04-28):**
+- Пока бэк целиком не проверен на синтетических данных — **ни один WF не активируется** в n8n.
+- Реальные WhatsApp-сообщения клиентам не отправляются: env-флаг `META_DRY_RUN=true` мокает отправку через INSERT в `notification_log`.
+- Активация (`workflow publish` или toggle в UI) — только после явного «активируй» от владельца.
+
+Чек перед активацией:
+1. Все 5 WF реализованы и протестированы на синтетических order_id.
+2. Тест-чеклист §8.8 PLAN.md пройден.
+3. Шаблоны Meta одобрены.
+4. `META_DRY_RUN` переключён на `false` (на рабочую отправку).
+5. Активация по одному WF, начиная с WF-E, в порядке §5.1, с проверкой логов после каждого.
+
 ### 5.1 Порядок активации workflow
 
 Активировать **в этом порядке** (зависимости вверх по цепочке):
@@ -393,3 +407,4 @@ print('OK')
 | 2026-04-28 | Sticky-плашки добавлены во все 5 WF (заголовок + что делает простым языком + тех стек). |
 | 2026-04-28 | WF-E (Alerter) построен и end-to-end протестирован. Telegram bot @SushiMarketAlert_bot, cred id `z27hahzThmGfBRup`. Проверено: первый запуск отправляет в Telegram + пишет в `alert_throttle` и `notification_log`; повторный запуск в течение 30 мин корректно блокируется throttle'ом. Известные нюансы n8n queryReplacement: (a) при пустой строке последний параметр обрезается — нужен placeholder `'-'`; (b) запятые внутри значения ломают split — заменяем на `;`; (c) `=alert_{{X}}` не склеивает префикс с выражением, нужен явный `{{ 'alert_' + X }}`. |
 | 2026-04-28 | WF-A Phase 2: добавлены ветки обработки событий. Switch `Route by Event` → `Insert New Order` (UPSERT) / `Update Status` / `Confirm Closed → Parse Final → Update Final`. Error-output `Fetch Listing` → `Alert Listing Error` (Execute Workflow → WF-E с reason `api_error_callcenter`). Validate Listing теперь делает strip HTML из `Status` (он приходит обёрнутым). Известный нюанс турецкого стенда: `POST /v5/order/status` для несуществующего order_id возвращает HTTP 404 с `{error:{data:'Not found'}}`, а не documented `'canceled'`. Обработано в Parse Final: `body.error → final='canceled'`. Тест order_closed: фейковый order_id=99999999 → 404 → корректно помечен `canceled`. |
+| 2026-04-28 | **Safety policy зафиксирована**: никаких тестов на реальных клиентах, никаких активных WF до полной проверки бэка. Введён env-флаг `META_DRY_RUN=true` (по умолчанию). WF-A и WF-E случайно были активированы предыдущим `workflow publish` — деактивированы (`unpublish`). Все 5 WF теперь `active=false`. Активация — только по явному «активируй» от владельца. |
