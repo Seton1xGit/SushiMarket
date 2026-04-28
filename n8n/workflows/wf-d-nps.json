@@ -1,10 +1,10 @@
 {
-  "updatedAt": "2026-04-27T23:32:07.987Z",
+  "updatedAt": "2026-04-28T00:29:57.271Z",
   "createdAt": "2026-04-27T23:05:39.600Z",
   "id": "KeQBljsKESqkPTX3",
   "name": "wf-d-nps",
   "description": null,
-  "active": false,
+  "active": true,
   "isArchived": false,
   "nodes": [
     {
@@ -18,13 +18,460 @@
       ],
       "parameters": {
         "color": 4,
-        "width": 1240,
-        "height": 280,
-        "content": "## WF-D · NPS — отзыв через 2 часа (AC-3)\n\n**Что делает простым языком**\nКогда WF-A видит, что заказ закрыт со статусом `completed` (доставлен), он передаёт сюда `order_id` и `completed_at`. Этот WF:\n1. Считает время отправки: `target = completed_at + 2 часа` в часовом поясе Europe/Istanbul.\n2. Сравнивает с порогом 22:00 этого же дня:\n   • если `target ≤ 22:00` — продолжаем,\n   • если `target > 22:00` — пишем `feedback_skipped=true`, ничего не отправляем, выходим. (Решение пользователя: ночью клиентов не беспокоим.)\n3. Засыпает (Wait-node) до `target_time`. n8n переживает рестарты — задача воскрешается в нужный момент.\n4. На пробуждении ещё раз проверяет: статус всё ещё `completed`? (Если за это время заказ отменили — выходим.)\n5. Шлёт WhatsApp «Как вам наш сервис?» и пишет `feedback_sent_at`.\n\n**Тех стек**\nExecute Workflow trigger → Code (вычислить target_time, проверить cutoff 22:00) → IF (target ≤ cutoff?) → Postgres UPDATE feedback_scheduled_at → Wait until target → Postgres SELECT (re-check status) → IF (still completed and not sent?) → WhatsApp Cloud API (template `feedback_request_ru`) → Postgres UPDATE\nКреды: `cred_postgres`, `cred_meta_whatsapp` (TBD).\nEnv: `TZ=Europe/Istanbul`, `NPS_DELAY_HOURS=2`, `NPS_CUTOFF_HOUR=22`.\n\n*Status:* пустой stub. Будет наполнен после WF-A Phase 2."
+        "width": 2120,
+        "height": 320,
+        "content": "## WF-D · NPS — отзыв через 2 часа (AC-3)\n\n**Что делает простым языком**\nКогда WF-A видит, что заказ закрыт со статусом `completed` (доставлен), он зовёт сюда с `completed_at`. WF-D:\n1. Считает время отправки: `target = completed_at + N минут` (по умолчанию 120, переменная `nps_delay_minutes` в Config — на dev можно ставить 1 для быстрого теста).\n2. Сравнивает с порогом 22:00 Europe/Istanbul того же дня:\n   • если `target ≤ 22:00` — продолжаем;\n   • если `target > 22:00` — `feedback_skipped=TRUE`, ничего не шлём, выходим (правило пользователя: ночью не беспокоим).\n3. Записывает `feedback_scheduled_at`.\n4. Засыпает (Wait-node) до `target_time`. n8n переживает рестарты — задача воскрешается в нужный момент.\n5. На пробуждении ещё раз читает БД: статус всё ещё `completed`? `feedback_sent_at` пустой?\n   • Если за время ожидания заказ отменили или уже отправили — выходим.\n   • Иначе шлём WA «Как вам наш сервис?» (в dry-run — мок в БД).\n6. Ставит `feedback_sent_at = NOW()`.\n\n**Тех стек**\nExecute Workflow trigger → Code Config → IF cutoff → (Schedule + Wait + Re-Check + IF still valid + Format + IF dry_run + Send/Mock + Mark) | Mark Skipped\nКреды: `cred_postgres`, `cred_meta_whatsapp` (TBD).\nEnv: `TZ=Europe/Istanbul`, дефолты в Config (`nps_delay_minutes=120`, `nps_cutoff_hour=22`)."
+      }
+    },
+    {
+      "id": "node-trigger",
+      "name": "Receive Order Completed",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        200,
+        480
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "order_id",
+              "type": "number"
+            },
+            {
+              "name": "client_phone"
+            },
+            {
+              "name": "order_type",
+              "type": "number"
+            },
+            {
+              "name": "completed_at"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node-config",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        480
+      ],
+      "parameters": {
+        "jsCode": "// Конфиг WF-D + расчёт target_time и cutoff_time.\n//\n// dry_run            — true в dev, false в prod (ровно как в WF-B/C).\n// nps_delay_minutes  — задержка от completed_at до отправки. 120 = 2 часа.\n//                      Для быстрых dev-тестов можно поставить 1.\n// nps_cutoff_hour    — час в Europe/Istanbul, после которого NPS не шлём.\n//                      Жёсткое требование пользователя: 22.\n\nconst DRY_RUN = true;\nconst NPS_DELAY_MIN = 120;\nconst NPS_CUTOFF_HOUR = 22;\nconst TZ = 'Europe/Istanbul';\n\nconst trig = $('Receive Order Completed').first().json;\nconst orderId = Number(trig.order_id);\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst orderType = Number(trig.order_type) || null;\nconst completedAtRaw = trig.completed_at;\n\n// Парсим completed_at. Принимаем ISO строку или epoch-миллисекунды.\nlet completedAt;\nif (!completedAtRaw) {\n  completedAt = new Date();\n} else if (typeof completedAtRaw === 'number') {\n  completedAt = new Date(completedAtRaw);\n} else {\n  completedAt = new Date(String(completedAtRaw));\n}\nif (isNaN(completedAt.getTime())) {\n  throw new Error('Invalid completed_at: ' + String(completedAtRaw));\n}\n\nconst targetTime = new Date(completedAt.getTime() + NPS_DELAY_MIN * 60 * 1000);\n\n// Cutoff = NPS_CUTOFF_HOUR:00 в TZ того же дня, что и completed_at.\n// Istanbul = UTC+3 круглый год (Turkey ушла от DST в 2016).\nconst tzOffsetHours = 3;\nconst dateInTz = new Date(completedAt.getTime() + tzOffsetHours * 60 * 60 * 1000);\nconst y = dateInTz.getUTCFullYear();\nconst m = String(dateInTz.getUTCMonth() + 1).padStart(2, '0');\nconst d = String(dateInTz.getUTCDate()).padStart(2, '0');\nconst hh = String(NPS_CUTOFF_HOUR).padStart(2, '0');\nconst cutoffIso = `${y}-${m}-${d}T${hh}:00:00+03:00`;\nconst cutoffTime = new Date(cutoffIso);\n\nconst withinWindow = targetTime.getTime() <= cutoffTime.getTime();\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: orderId,\n    client_phone: clientPhone,\n    order_type: orderType,\n    completed_at: completedAt.toISOString(),\n    target_time: targetTime.toISOString(),\n    cutoff_time: cutoffTime.toISOString(),\n    within_window: withinWindow,\n    nps_delay_minutes: NPS_DELAY_MIN,\n    tz: TZ\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-cutoff",
+      "name": "Within Window?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "in-window",
+              "leftValue": "={{ $json.within_window }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-mark-skipped",
+      "name": "Mark Feedback Skipped",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        860,
+        660
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET feedback_skipped = TRUE, feedback_scheduled_at = COALESCE(feedback_scheduled_at, $2::timestamptz) WHERE order_id = $1::bigint",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }},={{ $json.target_time }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-schedule",
+      "name": "Schedule Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        860,
+        380
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET feedback_scheduled_at = $2::timestamptz WHERE order_id = $1::bigint AND feedback_sent_at IS NULL",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }},={{ $('Config').first().json.target_time }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-wait",
+      "name": "Wait Until Target",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1080,
+        380
+      ],
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $('Config').first().json.target_time }}"
+      },
+      "webhookId": "wf-d-nps-wait"
+    },
+    {
+      "id": "node-recheck",
+      "name": "Re-Check State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1300,
+        380
+      ],
+      "alwaysOutputData": true,
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT order_id, last_status, feedback_sent_at FROM order_events WHERE order_id = $1::bigint LIMIT 1",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-still-valid",
+      "name": "Still Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1520,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "completed",
+              "leftValue": "={{ String($('Re-Check State').first().json.last_status || '') }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "not-yet-sent",
+              "leftValue": "={{ $('Re-Check State').first().json.feedback_sent_at }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-format",
+      "name": "Format NPS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1740,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\n\nconst lines = [];\nlines.push(`Здравствуйте! Заказ #${cfg.order_id} был доставлен.`);\nlines.push('');\nlines.push('Поделитесь, пожалуйста, впечатлениями: всё ли вам понравилось?');\nlines.push('Любая обратная связь — большая помощь нам!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'feedback_request_ru',\n    text: lines.join('\\n')\n  }\n}];"
+      }
+    },
+    {
+      "id": "node-dry-run",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1960,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-dry",
+              "leftValue": "={{ $('Config').first().json.dry_run }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-log-mock",
+      "name": "Log Mock Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2180,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log(order_id, template, channel, target_phone, success, error_text) VALUES ($1::bigint, $2, 'whatsapp', $3, false, 'dry_run')",
+        "options": {
+          "queryReplacement": "={{ $json.order_id }},={{ $json.template }},={{ $json.client_phone || '-' }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
+      }
+    },
+    {
+      "id": "node-real-send-stub",
+      "name": "Real WA Send (stub)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Stub реальной WA-отправки. См. WF-B note.\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+      }
+    },
+    {
+      "id": "node-mark-sent",
+      "name": "Mark Feedback Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2400,
+        280
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE order_events SET feedback_sent_at = NOW() WHERE order_id = $1::bigint AND feedback_sent_at IS NULL",
+        "options": {
+          "queryReplacement": "={{ $('Config').first().json.order_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "VCeTigIhYateDNgR",
+          "name": "cred_postgres"
+        }
       }
     }
   ],
-  "connections": {},
+  "connections": {
+    "Receive Order Completed": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Within Window?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Within Window?": {
+      "main": [
+        [
+          {
+            "node": "Schedule Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Feedback Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Send": {
+      "main": [
+        [
+          {
+            "node": "Wait Until Target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until Target": {
+      "main": [
+        [
+          {
+            "node": "Re-Check State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Re-Check State": {
+      "main": [
+        [
+          {
+            "node": "Still Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Valid?": {
+      "main": [
+        [
+          {
+            "node": "Format NPS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Format NPS": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Log Mock Send",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Real WA Send (stub)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Mock Send": {
+      "main": [
+        [
+          {
+            "node": "Mark Feedback Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real WA Send (stub)": {
+      "main": [
+        [
+          {
+            "node": "Mark Feedback Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
   "settings": {
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false,
@@ -32,9 +479,9 @@
   },
   "staticData": null,
   "meta": null,
-  "versionId": "5c2094b6-3b47-4af1-aa33-fef308711f3c",
-  "activeVersionId": null,
-  "versionCounter": 3,
+  "versionId": "4c23925a-f66c-4a34-a13f-848076631ed8",
+  "activeVersionId": "4c23925a-f66c-4a34-a13f-848076631ed8",
+  "versionCounter": 6,
   "triggerCount": 0,
   "shared": [
     {
@@ -91,5 +538,490 @@
     }
   ],
   "tags": [],
-  "activeVersion": null
+  "activeVersion": {
+    "updatedAt": "2026-04-28T00:29:57.273Z",
+    "createdAt": "2026-04-28T00:29:57.273Z",
+    "versionId": "4c23925a-f66c-4a34-a13f-848076631ed8",
+    "workflowId": "KeQBljsKESqkPTX3",
+    "nodes": [
+      {
+        "id": "sticky-readme",
+        "name": "README",
+        "type": "n8n-nodes-base.stickyNote",
+        "typeVersion": 1,
+        "position": [
+          80,
+          60
+        ],
+        "parameters": {
+          "color": 4,
+          "width": 2120,
+          "height": 320,
+          "content": "## WF-D · NPS — отзыв через 2 часа (AC-3)\n\n**Что делает простым языком**\nКогда WF-A видит, что заказ закрыт со статусом `completed` (доставлен), он зовёт сюда с `completed_at`. WF-D:\n1. Считает время отправки: `target = completed_at + N минут` (по умолчанию 120, переменная `nps_delay_minutes` в Config — на dev можно ставить 1 для быстрого теста).\n2. Сравнивает с порогом 22:00 Europe/Istanbul того же дня:\n   • если `target ≤ 22:00` — продолжаем;\n   • если `target > 22:00` — `feedback_skipped=TRUE`, ничего не шлём, выходим (правило пользователя: ночью не беспокоим).\n3. Записывает `feedback_scheduled_at`.\n4. Засыпает (Wait-node) до `target_time`. n8n переживает рестарты — задача воскрешается в нужный момент.\n5. На пробуждении ещё раз читает БД: статус всё ещё `completed`? `feedback_sent_at` пустой?\n   • Если за время ожидания заказ отменили или уже отправили — выходим.\n   • Иначе шлём WA «Как вам наш сервис?» (в dry-run — мок в БД).\n6. Ставит `feedback_sent_at = NOW()`.\n\n**Тех стек**\nExecute Workflow trigger → Code Config → IF cutoff → (Schedule + Wait + Re-Check + IF still valid + Format + IF dry_run + Send/Mock + Mark) | Mark Skipped\nКреды: `cred_postgres`, `cred_meta_whatsapp` (TBD).\nEnv: `TZ=Europe/Istanbul`, дефолты в Config (`nps_delay_minutes=120`, `nps_cutoff_hour=22`)."
+        }
+      },
+      {
+        "id": "node-trigger",
+        "name": "Receive Order Completed",
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          200,
+          480
+        ],
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "order_id",
+                "type": "number"
+              },
+              {
+                "name": "client_phone"
+              },
+              {
+                "name": "order_type",
+                "type": "number"
+              },
+              {
+                "name": "completed_at"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "node-config",
+        "name": "Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          420,
+          480
+        ],
+        "parameters": {
+          "jsCode": "// Конфиг WF-D + расчёт target_time и cutoff_time.\n//\n// dry_run            — true в dev, false в prod (ровно как в WF-B/C).\n// nps_delay_minutes  — задержка от completed_at до отправки. 120 = 2 часа.\n//                      Для быстрых dev-тестов можно поставить 1.\n// nps_cutoff_hour    — час в Europe/Istanbul, после которого NPS не шлём.\n//                      Жёсткое требование пользователя: 22.\n\nconst DRY_RUN = true;\nconst NPS_DELAY_MIN = 120;\nconst NPS_CUTOFF_HOUR = 22;\nconst TZ = 'Europe/Istanbul';\n\nconst trig = $('Receive Order Completed').first().json;\nconst orderId = Number(trig.order_id);\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst orderType = Number(trig.order_type) || null;\nconst completedAtRaw = trig.completed_at;\n\n// Парсим completed_at. Принимаем ISO строку или epoch-миллисекунды.\nlet completedAt;\nif (!completedAtRaw) {\n  completedAt = new Date();\n} else if (typeof completedAtRaw === 'number') {\n  completedAt = new Date(completedAtRaw);\n} else {\n  completedAt = new Date(String(completedAtRaw));\n}\nif (isNaN(completedAt.getTime())) {\n  throw new Error('Invalid completed_at: ' + String(completedAtRaw));\n}\n\nconst targetTime = new Date(completedAt.getTime() + NPS_DELAY_MIN * 60 * 1000);\n\n// Cutoff = NPS_CUTOFF_HOUR:00 в TZ того же дня, что и completed_at.\n// Istanbul = UTC+3 круглый год (Turkey ушла от DST в 2016).\nconst tzOffsetHours = 3;\nconst dateInTz = new Date(completedAt.getTime() + tzOffsetHours * 60 * 60 * 1000);\nconst y = dateInTz.getUTCFullYear();\nconst m = String(dateInTz.getUTCMonth() + 1).padStart(2, '0');\nconst d = String(dateInTz.getUTCDate()).padStart(2, '0');\nconst hh = String(NPS_CUTOFF_HOUR).padStart(2, '0');\nconst cutoffIso = `${y}-${m}-${d}T${hh}:00:00+03:00`;\nconst cutoffTime = new Date(cutoffIso);\n\nconst withinWindow = targetTime.getTime() <= cutoffTime.getTime();\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: orderId,\n    client_phone: clientPhone,\n    order_type: orderType,\n    completed_at: completedAt.toISOString(),\n    target_time: targetTime.toISOString(),\n    cutoff_time: cutoffTime.toISOString(),\n    within_window: withinWindow,\n    nps_delay_minutes: NPS_DELAY_MIN,\n    tz: TZ\n  }\n}];"
+        }
+      },
+      {
+        "id": "node-cutoff",
+        "name": "Within Window?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          640,
+          480
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "in-window",
+                "leftValue": "={{ $json.within_window }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "node-mark-skipped",
+        "name": "Mark Feedback Skipped",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          860,
+          660
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE order_events SET feedback_skipped = TRUE, feedback_scheduled_at = COALESCE(feedback_scheduled_at, $2::timestamptz) WHERE order_id = $1::bigint",
+          "options": {
+            "queryReplacement": "={{ $json.order_id }},={{ $json.target_time }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-schedule",
+        "name": "Schedule Send",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          860,
+          380
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE order_events SET feedback_scheduled_at = $2::timestamptz WHERE order_id = $1::bigint AND feedback_sent_at IS NULL",
+          "options": {
+            "queryReplacement": "={{ $('Config').first().json.order_id }},={{ $('Config').first().json.target_time }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-wait",
+        "name": "Wait Until Target",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          1080,
+          380
+        ],
+        "parameters": {
+          "resume": "specificTime",
+          "dateTime": "={{ $('Config').first().json.target_time }}"
+        },
+        "webhookId": "wf-d-nps-wait"
+      },
+      {
+        "id": "node-recheck",
+        "name": "Re-Check State",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1300,
+          380
+        ],
+        "alwaysOutputData": true,
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT order_id, last_status, feedback_sent_at FROM order_events WHERE order_id = $1::bigint LIMIT 1",
+          "options": {
+            "queryReplacement": "={{ $('Config').first().json.order_id }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-still-valid",
+        "name": "Still Valid?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1520,
+          380
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "completed",
+                "leftValue": "={{ String($('Re-Check State').first().json.last_status || '') }}",
+                "rightValue": "completed",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              },
+              {
+                "id": "not-yet-sent",
+                "leftValue": "={{ $('Re-Check State').first().json.feedback_sent_at }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "empty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "node-format",
+        "name": "Format NPS",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1740,
+          280
+        ],
+        "parameters": {
+          "jsCode": "const cfg = $('Config').first().json;\n\nconst lines = [];\nlines.push(`Здравствуйте! Заказ #${cfg.order_id} был доставлен.`);\nlines.push('');\nlines.push('Поделитесь, пожалуйста, впечатлениями: всё ли вам понравилось?');\nlines.push('Любая обратная связь — большая помощь нам!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    template: 'feedback_request_ru',\n    text: lines.join('\\n')\n  }\n}];"
+        }
+      },
+      {
+        "id": "node-dry-run",
+        "name": "Dry Run?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1960,
+          280
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "is-dry",
+                "leftValue": "={{ $('Config').first().json.dry_run }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "node-log-mock",
+        "name": "Log Mock Send",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2180,
+          200
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_log(order_id, template, channel, target_phone, success, error_text) VALUES ($1::bigint, $2, 'whatsapp', $3, false, 'dry_run')",
+          "options": {
+            "queryReplacement": "={{ $json.order_id }},={{ $json.template }},={{ $json.client_phone || '-' }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      },
+      {
+        "id": "node-real-send-stub",
+        "name": "Real WA Send (stub)",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2180,
+          360
+        ],
+        "parameters": {
+          "jsCode": "// Stub реальной WA-отправки. См. WF-B note.\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+        }
+      },
+      {
+        "id": "node-mark-sent",
+        "name": "Mark Feedback Sent",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2400,
+          280
+        ],
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE order_events SET feedback_sent_at = NOW() WHERE order_id = $1::bigint AND feedback_sent_at IS NULL",
+          "options": {
+            "queryReplacement": "={{ $('Config').first().json.order_id }}"
+          }
+        },
+        "credentials": {
+          "postgres": {
+            "id": "VCeTigIhYateDNgR",
+            "name": "cred_postgres"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Receive Order Completed": {
+        "main": [
+          [
+            {
+              "node": "Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Config": {
+        "main": [
+          [
+            {
+              "node": "Within Window?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Within Window?": {
+        "main": [
+          [
+            {
+              "node": "Schedule Send",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mark Feedback Skipped",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Schedule Send": {
+        "main": [
+          [
+            {
+              "node": "Wait Until Target",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait Until Target": {
+        "main": [
+          [
+            {
+              "node": "Re-Check State",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Re-Check State": {
+        "main": [
+          [
+            {
+              "node": "Still Valid?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Still Valid?": {
+        "main": [
+          [
+            {
+              "node": "Format NPS",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Format NPS": {
+        "main": [
+          [
+            {
+              "node": "Dry Run?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dry Run?": {
+        "main": [
+          [
+            {
+              "node": "Log Mock Send",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Real WA Send (stub)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Mock Send": {
+        "main": [
+          [
+            {
+              "node": "Mark Feedback Sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Real WA Send (stub)": {
+        "main": [
+          [
+            {
+              "node": "Mark Feedback Sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Ivan Ptichkin",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-28T00:29:58.241Z",
+        "id": 909,
+        "workflowId": "KeQBljsKESqkPTX3",
+        "versionId": "4c23925a-f66c-4a34-a13f-848076631ed8",
+        "event": "activated",
+        "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7"
+      }
+    ]
+  }
 }

@@ -1,0 +1,173 @@
+{
+  "updatedAt": "2026-04-28T00:33:49.256Z",
+  "createdAt": "2026-04-28T00:30:07.949Z",
+  "id": "Qr4U9RTRDPwQC7Nj",
+  "name": "wf-d-test-runner",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "sticky",
+      "name": "README",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        60
+      ],
+      "parameters": {
+        "color": 6,
+        "width": 1100,
+        "height": 240,
+        "content": "## wf-d-test-runner — синтетический запуск WF-D\n\n**Что делает простым языком**\nManual-runner для тестов WF-D без активации основного потока. По умолчанию передаёт `completed_at = NOW - 119 минут` — так `target = NOW + 1 минута` (внутри окна 22:00 → отправит через минуту в dry-run).\n\nВ Code «Test Payload» можно поставить `mode = 'late'` — это даст `completed_at = today 21:30` → `target ≈ 23:30` → за окном → `feedback_skipped=TRUE` без задержки.\n\n**Перед запуском:** убедиться, что в `order_events` есть строка `order_id=64488` со статусом `completed`. Иначе Re-Check State увидит другой статус и Still Valid? зарежет отправку.\n\n**После прода удалить** — в проде не нужен."
+      }
+    },
+    {
+      "id": "trig",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        360
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "payload",
+      "name": "Test Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Поменять mode для разных сценариев:\n//   'within' — completed_at был 119 минут назад, target ≈ NOW+1мин, в окне.\n//   'late'   — completed_at сегодня в 21:30 Istanbul, target=23:30, за окном.\nconst mode = 'within';\n\nconst now = new Date();\nlet completedAt;\nif (mode === 'late') {\n  // Сегодня 21:30 Europe/Istanbul (UTC+3) → 18:30 UTC.\n  const todayIst = new Date(now.getTime() + 3 * 3600 * 1000);\n  const y = todayIst.getUTCFullYear();\n  const m = String(todayIst.getUTCMonth() + 1).padStart(2, '0');\n  const d = String(todayIst.getUTCDate()).padStart(2, '0');\n  completedAt = new Date(`${y}-${m}-${d}T21:30:00+03:00`).toISOString();\n} else {\n  // 119 минут назад от NOW.\n  completedAt = new Date(now.getTime() - 119 * 60 * 1000).toISOString();\n}\n\nreturn [{\n  json: {\n    order_id: 64488,\n    client_phone: '905349130325',\n    order_type: 1,\n    completed_at: completedAt,\n    _mode: mode\n  }\n}];"
+      }
+    },
+    {
+      "id": "exec-d",
+      "name": "Run WF-D",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        360
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "KeQBljsKESqkPTX3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}",
+            "completed_at": "={{ $json.completed_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Test Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Payload": {
+      "main": [
+        [
+          {
+            "node": "Run WF-D",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "versionId": "d2e8a2ae-7a65-41c2-bc49-d5d592bab197",
+  "activeVersionId": null,
+  "versionCounter": 5,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-04-28T00:30:07.952Z",
+      "createdAt": "2026-04-28T00:30:07.952Z",
+      "role": "workflow:owner",
+      "workflowId": "Qr4U9RTRDPwQC7Nj",
+      "projectId": "4P7y04n69k3wJV0z",
+      "project": {
+        "updatedAt": "2026-02-16T19:47:17.909Z",
+        "createdAt": "2026-02-16T19:45:47.794Z",
+        "id": "4P7y04n69k3wJV0z",
+        "name": "Ivan Ptichkin <miriu2100@yandex.ru>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+        "projectRelations": [
+          {
+            "updatedAt": "2026-02-16T19:45:47.799Z",
+            "createdAt": "2026-02-16T19:45:47.799Z",
+            "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+            "projectId": "4P7y04n69k3wJV0z",
+            "user": {
+              "updatedAt": "2026-04-27T21:54:23.000Z",
+              "createdAt": "2026-02-16T19:45:47.783Z",
+              "id": "6056908c-022f-4951-8bad-8a1e3a04c7d7",
+              "email": "miriu2100@yandex.ru",
+              "firstName": "Ivan",
+              "lastName": "Ptichkin",
+              "personalizationAnswers": {
+                "version": "v4",
+                "personalization_survey_submitted_at": "2026-03-14T08:45:43.660Z",
+                "personalization_survey_n8n_version": "2.4.6"
+              },
+              "settings": {
+                "easyAIWorkflowOnboarded": true,
+                "firstSuccessfulWorkflowId": "vt0fGM1aWlOUiZCO",
+                "userActivated": true,
+                "userActivatedAt": 1773522000055,
+                "npsSurvey": {
+                  "responded": true,
+                  "lastShownAt": 1775830866741
+                }
+              },
+              "disabled": false,
+              "mfaEnabled": false,
+              "lastActiveAt": "2026-04-27",
+              "isPending": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}
