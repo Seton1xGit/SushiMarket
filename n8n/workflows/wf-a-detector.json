@@ -1,10 +1,10 @@
 {
-  "updatedAt": "2026-04-27T23:57:38.224Z",
+  "updatedAt": "2026-04-28T00:49:33.595Z",
   "createdAt": "2026-04-27T23:05:35.769Z",
   "id": "bLhdS9V4FioCdVZI",
   "name": "wf-a-detector",
   "description": null,
-  "active": true,
+  "active": false,
   "isArchived": false,
   "nodes": [
     {
@@ -18,9 +18,9 @@
       ],
       "parameters": {
         "color": 5,
-        "width": 1880,
-        "height": 240,
-        "content": "## WF-A · Detector — триггер всей системы\n\n**Что делает простым языком**\nКаждые 15 секунд читает список активных заказов в админке call-center, сравнивает с тем, что мы сохранили в БД, и порождает события:\n• появился новый заказ → `new_order` → INSERT в `order_events` (заглушка под WF-B на будущее)\n• у существующего изменился статус → `status_changed` → UPDATE\n• исчез из листинга (доставлен/отменён) → `order_closed` → POST `/v5/order/status` для подтверждения final → UPDATE\n\nЕсли listing-API недоступен или вернул 401 — алерт админу через WF-E.\n\n**Тех стек**\nSchedule (15s) → HTTP GET `…/call-center/api/orders__deprecated` → Code (валидация JSON, strip HTML из Status) → Postgres SELECT активных за 7 дней → Code (compute diff) → Switch (event_type) → 3 ветки Postgres / HTTP\nКреды: `cred_callcenter_admin`, `cred_datafood_public`, `cred_postgres`. Error-output Fetch Listing → Execute Workflow `wf-e-alerter`."
+        "width": 2540,
+        "height": 280,
+        "content": "## WF-A · Detector — триггер всей системы\n\n**Что делает простым языком**\nКаждые 15 секунд читает список активных заказов в админке call-center, сравнивает с тем, что у нас в БД, и порождает события:\n• появился новый заказ → `new_order` → INSERT в `order_events` → (если delivery) Execute Workflow `wf-b-welcome`\n• у существующего изменился статус → `status_changed` → UPDATE → (если to_status «в пути» и delivery) Execute Workflow `wf-c-in-transit`\n• исчез из листинга → `order_closed` → POST `/v5/order/status` → Parse Final → UPDATE → (если completed и delivery) Execute Workflow `wf-d-nps`\n\nЕсли listing-API недоступен или 401 — алерт админу через WF-E.\n\n**Тех стек**\nSchedule (15s) → HTTP GET listing → Code (validate, strip HTML) → Postgres SELECT → Code (diff) → Switch (event_type) → 3 ветки Postgres/HTTP + Execute Workflow в B/C/D.\nКреды: `cred_callcenter_admin`, `cred_datafood_public`, `cred_postgres`. Зависимые WF: `gm8yPsQ0vZA7yNx3` (B), `NFKSGYx8koD1V55o` (C), `KeQBljsKESqkPTX3` (D), `O9Rt4HG7kDqxBrCv` (E)."
       }
     },
     {
@@ -153,7 +153,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "// Принимает ответ /call-center/api/orders__deprecated.\n// Возвращает один item: { orders: [...], count, fetched_at }.\n//\n// Замечание: API может вернуть {status:'error', message:'Заказы отсутствуют', data:[]}\n// при пустом активном списке — это НЕ ошибка.\n//\n// Status в ответе обёрнут в HTML — извлекаем человекочитаемый текст.\n\nconst input = $input.first()?.json ?? {};\n\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\n\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\n\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: stripHtml(r.Status).slice(0, 100)\n})).filter(o => Number.isFinite(o.order_id));\n\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
+        "jsCode": "const input = $input.first()?.json ?? {};\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: stripHtml(r.Status).slice(0, 100)\n})).filter(o => Number.isFinite(o.order_id));\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
       }
     },
     {
@@ -188,7 +188,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "// Дифф между текущим листингом и снимком из БД.\nconst listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\n\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\n\nconst events = [];\n\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\n\nreturn events.map(e => ({ json: e }));"
+        "jsCode": "const listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\nconst events = [];\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\nreturn events.map(e => ({ json: e }));"
       }
     },
     {
@@ -286,7 +286,7 @@
       "typeVersion": 2.5,
       "position": [
         1520,
-        200
+        100
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -300,6 +300,68 @@
           "id": "VCeTigIhYateDNgR",
           "name": "cred_postgres"
         }
+      }
+    },
+    {
+      "id": "node-welcome-gate",
+      "name": "Welcome Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1740,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Number($json.order_type) || 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-call-b",
+      "name": "Run WF-B",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gm8yPsQ0vZA7yNx3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
       }
     },
     {
@@ -326,13 +388,86 @@
       }
     },
     {
+      "id": "node-transit-gate",
+      "name": "InTransit Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1740,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "delivery",
+              "leftValue": "={{ Number($json.order_type) || 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "in-transit-words",
+              "leftValue": "={{ String($json.to_status || '').toLowerCase() }}",
+              "rightValue": "достав|курьер в пути|курьер выехал",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-call-c",
+      "name": "Run WF-C",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        360
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "NFKSGYx8koD1V55o",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}",
+            "to_status": "={{ $json.to_status }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "node-confirm-closed",
       "name": "Confirm Closed",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
         1520,
-        540
+        620
       ],
       "onError": "continueRegularOutput",
       "parameters": {
@@ -366,10 +501,10 @@
       "typeVersion": 2,
       "position": [
         1740,
-        540
+        620
       ],
       "parameters": {
-        "jsCode": "// Парсим ответ /v5/order/status: {status:'success', result:[{id, status}]}.\n// На несуществующий order_id турецкий стенд возвращает HTTP 404 c {error:...}\n// (не 'canceled', как написано в публичной доке). Учитываем это.\n\nconst src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\n\nlet final;\nif (body.error) {\n  // 404 / ошибка сервера → считаем заказ отменённым\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\n\nreturn [{\n  json: {\n    order_id: orderId,\n    final_status: final,\n    is_completed: final === 'completed',\n    detected_at: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\nlet final;\nif (body.error) {\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\nreturn [{\n  json: {\n    order_id: orderId,\n    client_phone: src.client_phone,\n    order_type: src.order_type,\n    final_status: final,\n    is_completed: final === 'completed',\n    completed_at: new Date().toISOString()\n  }\n}];"
       }
     },
     {
@@ -379,7 +514,7 @@
       "typeVersion": 2.5,
       "position": [
         1960,
-        540
+        620
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -393,6 +528,80 @@
           "id": "VCeTigIhYateDNgR",
           "name": "cred_postgres"
         }
+      }
+    },
+    {
+      "id": "node-completed-gate",
+      "name": "Completed Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2180,
+        620
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-completed",
+              "leftValue": "={{ $json.is_completed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "delivery",
+              "leftValue": "={{ Number($json.order_type) || 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "node-call-d",
+      "name": "Run WF-D",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        620
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "KeQBljsKESqkPTX3",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_id": "={{ $json.order_id }}",
+            "client_phone": "={{ $json.client_phone }}",
+            "order_type": "={{ $json.order_type }}",
+            "completed_at": "={{ $json.completed_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
       }
     }
   ],
@@ -484,6 +693,52 @@
         ]
       ]
     },
+    "Insert New Order": {
+      "main": [
+        [
+          {
+            "node": "Welcome Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Welcome Gate": {
+      "main": [
+        [
+          {
+            "node": "Run WF-B",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Update Status": {
+      "main": [
+        [
+          {
+            "node": "InTransit Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InTransit Gate": {
+      "main": [
+        [
+          {
+            "node": "Run WF-C",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
     "Confirm Closed": {
       "main": [
         [
@@ -505,6 +760,29 @@
           }
         ]
       ]
+    },
+    "Update Final": {
+      "main": [
+        [
+          {
+            "node": "Completed Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completed Gate": {
+      "main": [
+        [
+          {
+            "node": "Run WF-D",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
     }
   },
   "settings": {
@@ -518,9 +796,9 @@
     }
   },
   "meta": null,
-  "versionId": "20c304b4-b86a-4d28-843f-95457d06cc7a",
-  "activeVersionId": "20c304b4-b86a-4d28-843f-95457d06cc7a",
-  "versionCounter": 19,
+  "versionId": "99dc70fd-6d01-4779-8fe5-d131cd8ef063",
+  "activeVersionId": null,
+  "versionCounter": 21,
   "triggerCount": 1,
   "shared": [
     {
@@ -577,525 +855,5 @@
     }
   ],
   "tags": [],
-  "activeVersion": {
-    "updatedAt": "2026-04-27T23:57:38.225Z",
-    "createdAt": "2026-04-27T23:57:38.225Z",
-    "versionId": "20c304b4-b86a-4d28-843f-95457d06cc7a",
-    "workflowId": "bLhdS9V4FioCdVZI",
-    "nodes": [
-      {
-        "id": "sticky-readme",
-        "name": "README",
-        "type": "n8n-nodes-base.stickyNote",
-        "typeVersion": 1,
-        "position": [
-          80,
-          60
-        ],
-        "parameters": {
-          "color": 5,
-          "width": 1880,
-          "height": 240,
-          "content": "## WF-A · Detector — триггер всей системы\n\n**Что делает простым языком**\nКаждые 15 секунд читает список активных заказов в админке call-center, сравнивает с тем, что мы сохранили в БД, и порождает события:\n• появился новый заказ → `new_order` → INSERT в `order_events` (заглушка под WF-B на будущее)\n• у существующего изменился статус → `status_changed` → UPDATE\n• исчез из листинга (доставлен/отменён) → `order_closed` → POST `/v5/order/status` для подтверждения final → UPDATE\n\nЕсли listing-API недоступен или вернул 401 — алерт админу через WF-E.\n\n**Тех стек**\nSchedule (15s) → HTTP GET `…/call-center/api/orders__deprecated` → Code (валидация JSON, strip HTML из Status) → Postgres SELECT активных за 7 дней → Code (compute diff) → Switch (event_type) → 3 ветки Postgres / HTTP\nКреды: `cred_callcenter_admin`, `cred_datafood_public`, `cred_postgres`. Error-output Fetch Listing → Execute Workflow `wf-e-alerter`."
-        }
-      },
-      {
-        "id": "node-schedule",
-        "name": "Every 15s",
-        "type": "n8n-nodes-base.scheduleTrigger",
-        "typeVersion": 1.2,
-        "position": [
-          200,
-          360
-        ],
-        "parameters": {
-          "rule": {
-            "interval": [
-              {
-                "field": "seconds",
-                "secondsInterval": 15
-              }
-            ]
-          }
-        }
-      },
-      {
-        "id": "node-http-listing",
-        "name": "Fetch Listing",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          420,
-          360
-        ],
-        "onError": "continueErrorOutput",
-        "parameters": {
-          "method": "GET",
-          "url": "https://sushimarket-tr.datafood.tech/call-center/api/orders__deprecated",
-          "authentication": "genericCredentialType",
-          "genericAuthType": "httpHeaderAuth",
-          "sendQuery": true,
-          "queryParameters": {
-            "parameters": [
-              {
-                "name": "status",
-                "value": "activ"
-              },
-              {
-                "name": "type_select_cities",
-                "value": "include"
-              },
-              {
-                "name": "_",
-                "value": "={{ Date.now() }}"
-              }
-            ]
-          },
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Origin",
-                "value": "https://call-center-tr.sushi-market.com"
-              },
-              {
-                "name": "Referer",
-                "value": "https://call-center-tr.sushi-market.com/"
-              },
-              {
-                "name": "Accept",
-                "value": "application/json, text/javascript, */*; q=0.01"
-              }
-            ]
-          },
-          "options": {
-            "timeout": 10000,
-            "retry": {
-              "tries": 3,
-              "waitBetweenTries": 2000
-            },
-            "response": {
-              "response": {
-                "responseFormat": "json"
-              }
-            }
-          }
-        },
-        "credentials": {
-          "httpHeaderAuth": {
-            "id": "J2VGKR5XEitklRVf",
-            "name": "cred_callcenter_admin"
-          }
-        }
-      },
-      {
-        "id": "node-listing-error",
-        "name": "Alert Listing Error",
-        "type": "n8n-nodes-base.executeWorkflow",
-        "typeVersion": 1.2,
-        "position": [
-          640,
-          540
-        ],
-        "parameters": {
-          "workflowId": {
-            "__rl": true,
-            "value": "O9Rt4HG7kDqxBrCv",
-            "mode": "id"
-          },
-          "workflowInputs": {
-            "mappingMode": "defineBelow",
-            "value": {
-              "reason": "api_error_callcenter",
-              "order_id": "0",
-              "error": "={{ ($json && $json.error && $json.error.message) || JSON.stringify($json).slice(0, 200) }}",
-              "context": "={{ JSON.stringify({source:'Fetch Listing', httpCode: ($json && $json.error && $json.error.httpCode) || null}) }}"
-            },
-            "matchingColumns": [],
-            "schema": [],
-            "attemptToConvertTypes": false,
-            "convertFieldsToString": true
-          },
-          "options": {}
-        }
-      },
-      {
-        "id": "node-validate",
-        "name": "Validate Listing",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          640,
-          360
-        ],
-        "parameters": {
-          "jsCode": "// Принимает ответ /call-center/api/orders__deprecated.\n// Возвращает один item: { orders: [...], count, fetched_at }.\n//\n// Замечание: API может вернуть {status:'error', message:'Заказы отсутствуют', data:[]}\n// при пустом активном списке — это НЕ ошибка.\n//\n// Status в ответе обёрнут в HTML — извлекаем человекочитаемый текст.\n\nconst input = $input.first()?.json ?? {};\n\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\n\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\n\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nconst orders = rows.map(r => ({\n  order_id: Number(r.id),\n  client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n  order_type: typeof r.order_type === 'number' ? r.order_type : null,\n  status_raw: stripHtml(r.Status).slice(0, 100)\n})).filter(o => Number.isFinite(o.order_id));\n\nreturn [{ json: { orders, count: orders.length, fetched_at: new Date().toISOString() } }];"
-        }
-      },
-      {
-        "id": "node-load-known",
-        "name": "Load Known",
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.5,
-        "position": [
-          860,
-          360
-        ],
-        "alwaysOutputData": true,
-        "parameters": {
-          "operation": "executeQuery",
-          "query": "SELECT order_id, last_status, client_phone, order_type, welcome_sent_at, transit_sent_at, completed_at, feedback_sent_at FROM order_events WHERE last_status NOT IN ('completed','canceled') AND last_seen_at > NOW() - INTERVAL '7 days'",
-          "options": {}
-        },
-        "credentials": {
-          "postgres": {
-            "id": "VCeTigIhYateDNgR",
-            "name": "cred_postgres"
-          }
-        }
-      },
-      {
-        "id": "node-diff",
-        "name": "Compute Diff",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1080,
-          360
-        ],
-        "parameters": {
-          "jsCode": "// Дифф между текущим листингом и снимком из БД.\nconst listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\n\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\n\nconst events = [];\n\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\n\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\n\nreturn events.map(e => ({ json: e }));"
-        }
-      },
-      {
-        "id": "node-route",
-        "name": "Route by Event",
-        "type": "n8n-nodes-base.switch",
-        "typeVersion": 3.2,
-        "position": [
-          1300,
-          360
-        ],
-        "parameters": {
-          "rules": {
-            "values": [
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": true,
-                    "leftValue": "",
-                    "typeValidation": "loose",
-                    "version": 2
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.event_type }}",
-                      "rightValue": "new_order",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      }
-                    }
-                  ],
-                  "combinator": "and"
-                },
-                "renameOutput": true,
-                "outputKey": "new_order"
-              },
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": true,
-                    "leftValue": "",
-                    "typeValidation": "loose",
-                    "version": 2
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.event_type }}",
-                      "rightValue": "status_changed",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      }
-                    }
-                  ],
-                  "combinator": "and"
-                },
-                "renameOutput": true,
-                "outputKey": "status_changed"
-              },
-              {
-                "conditions": {
-                  "options": {
-                    "caseSensitive": true,
-                    "leftValue": "",
-                    "typeValidation": "loose",
-                    "version": 2
-                  },
-                  "conditions": [
-                    {
-                      "leftValue": "={{ $json.event_type }}",
-                      "rightValue": "order_closed",
-                      "operator": {
-                        "type": "string",
-                        "operation": "equals"
-                      }
-                    }
-                  ],
-                  "combinator": "and"
-                },
-                "renameOutput": true,
-                "outputKey": "order_closed"
-              }
-            ]
-          },
-          "options": {
-            "fallbackOutput": "none"
-          }
-        }
-      },
-      {
-        "id": "node-insert-new",
-        "name": "Insert New Order",
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.5,
-        "position": [
-          1520,
-          200
-        ],
-        "parameters": {
-          "operation": "executeQuery",
-          "query": "INSERT INTO order_events(order_id, client_phone, order_type, last_status, last_seen_at) VALUES ($1::bigint, NULLIF($2, '-'), NULLIF($3, 0)::smallint, $4, NOW()) ON CONFLICT (order_id) DO UPDATE SET last_status = EXCLUDED.last_status, last_seen_at = NOW(), client_phone = COALESCE(order_events.client_phone, EXCLUDED.client_phone)",
-          "options": {
-            "queryReplacement": "={{ $json.order_id }},={{ $json.client_phone || '-' }},={{ Number($json.order_type) || 0 }},={{ $json.status_raw || '-' }}"
-          }
-        },
-        "credentials": {
-          "postgres": {
-            "id": "VCeTigIhYateDNgR",
-            "name": "cred_postgres"
-          }
-        }
-      },
-      {
-        "id": "node-update-status",
-        "name": "Update Status",
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.5,
-        "position": [
-          1520,
-          360
-        ],
-        "parameters": {
-          "operation": "executeQuery",
-          "query": "UPDATE order_events SET last_status = $1, last_seen_at = NOW() WHERE order_id = $2::bigint",
-          "options": {
-            "queryReplacement": "={{ $json.status_raw || $json.to_status || '-' }},={{ $json.order_id }}"
-          }
-        },
-        "credentials": {
-          "postgres": {
-            "id": "VCeTigIhYateDNgR",
-            "name": "cred_postgres"
-          }
-        }
-      },
-      {
-        "id": "node-confirm-closed",
-        "name": "Confirm Closed",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [
-          1520,
-          540
-        ],
-        "onError": "continueRegularOutput",
-        "parameters": {
-          "method": "POST",
-          "url": "https://office-tr.sushi-market.com/api/app/v5/order/status",
-          "authentication": "genericCredentialType",
-          "genericAuthType": "httpHeaderAuth",
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={\"orders\":[{{ $json.order_id }}]}",
-          "options": {
-            "timeout": 10000,
-            "response": {
-              "response": {
-                "responseFormat": "json"
-              }
-            }
-          }
-        },
-        "credentials": {
-          "httpHeaderAuth": {
-            "id": "OvipNoJ83kkncmrA",
-            "name": "cred_datafood_public"
-          }
-        }
-      },
-      {
-        "id": "node-parse-final",
-        "name": "Parse Final",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          1740,
-          540
-        ],
-        "parameters": {
-          "jsCode": "// Парсим ответ /v5/order/status: {status:'success', result:[{id, status}]}.\n// На несуществующий order_id турецкий стенд возвращает HTTP 404 c {error:...}\n// (не 'canceled', как написано в публичной доке). Учитываем это.\n\nconst src = $('Compute Diff').first().json;\nconst orderId = Number(src.order_id);\nconst body = $input.first()?.json || {};\n\nlet final;\nif (body.error) {\n  // 404 / ошибка сервера → считаем заказ отменённым\n  final = 'canceled';\n} else {\n  const result = Array.isArray(body.result) ? body.result : [];\n  const row = result.find(r => Number(r.id) === orderId) || {};\n  final = String(row.status || 'canceled');\n}\n\nreturn [{\n  json: {\n    order_id: orderId,\n    final_status: final,\n    is_completed: final === 'completed',\n    detected_at: new Date().toISOString()\n  }\n}];"
-        }
-      },
-      {
-        "id": "node-update-final",
-        "name": "Update Final",
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.5,
-        "position": [
-          1960,
-          540
-        ],
-        "parameters": {
-          "operation": "executeQuery",
-          "query": "UPDATE order_events SET last_status = $1, last_seen_at = NOW(), completed_at = CASE WHEN $1 = 'completed' AND completed_at IS NULL THEN NOW() ELSE completed_at END WHERE order_id = $2::bigint",
-          "options": {
-            "queryReplacement": "={{ $json.final_status || '-' }},={{ $json.order_id }}"
-          }
-        },
-        "credentials": {
-          "postgres": {
-            "id": "VCeTigIhYateDNgR",
-            "name": "cred_postgres"
-          }
-        }
-      }
-    ],
-    "connections": {
-      "Every 15s": {
-        "main": [
-          [
-            {
-              "node": "Fetch Listing",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Fetch Listing": {
-        "main": [
-          [
-            {
-              "node": "Validate Listing",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Alert Listing Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Validate Listing": {
-        "main": [
-          [
-            {
-              "node": "Load Known",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Load Known": {
-        "main": [
-          [
-            {
-              "node": "Compute Diff",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Compute Diff": {
-        "main": [
-          [
-            {
-              "node": "Route by Event",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Route by Event": {
-        "main": [
-          [
-            {
-              "node": "Insert New Order",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Update Status",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Confirm Closed",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Confirm Closed": {
-        "main": [
-          [
-            {
-              "node": "Parse Final",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Parse Final": {
-        "main": [
-          [
-            {
-              "node": "Update Final",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      }
-    },
-    "authors": "Ivan Ptichkin",
-    "name": null,
-    "description": null,
-    "autosaved": false,
-    "workflowPublishHistory": [
-      {
-        "createdAt": "2026-04-27T23:57:38.272Z",
-        "id": 905,
-        "workflowId": "bLhdS9V4FioCdVZI",
-        "versionId": "20c304b4-b86a-4d28-843f-95457d06cc7a",
-        "event": "activated",
-        "userId": "6056908c-022f-4951-8bad-8a1e3a04c7d7"
-      }
-    ]
-  }
+  "activeVersion": null
 }
