@@ -63,7 +63,7 @@
         460
       ],
       "parameters": {
-        "jsCode": "// Единая точка управления режимами WF-B.\n//\n// dry_run=true → не шлём в WhatsApp реально, только пишем в notification_log.\n// OPERATOR_REDIRECT_PHONE — пока тестируем, ВСЕ клиентские сообщения летят на этот номер,\n// а не на реальный client_phone. Когда всё проверим — поставить '' или null, и сообщения пойдут клиентам как положено.\n\nconst DRY_RUN = true;\nconst OPERATOR_REDIRECT_PHONE = '79000430011';\n\nconst trig = $('Receive Order').first().json;\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst targetPhone = OPERATOR_REDIRECT_PHONE || clientPhone;\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: Number(trig.order_id),\n    client_phone: clientPhone,\n    target_phone: targetPhone,\n    is_redirected: !!OPERATOR_REDIRECT_PHONE,\n    client_name: (trig.client_name && String(trig.client_name).trim()) || null,\n    order_type: Number(trig.order_type) || null\n  }\n}];"
+        "jsCode": "// Единая точка управления режимами WF-B.\n//\n// dry_run=true → не шлём в WhatsApp реально, только пишем в notification_log.\n// OPERATOR_REDIRECT_PHONE — пока тестируем, ВСЕ клиентские сообщения летят на этот номер,\n// а не на реальный client_phone. Когда всё проверим — поставить '' или null.\n\nconst DRY_RUN = true;\nconst OPERATOR_REDIRECT_PHONE = '79000430011';\n\nconst trig = $('Receive Order').first().json;\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst targetPhone = OPERATOR_REDIRECT_PHONE || clientPhone;\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: Number(trig.order_id),\n    client_phone: clientPhone,\n    target_phone: targetPhone,\n    is_redirected: !!OPERATOR_REDIRECT_PHONE,\n    client_name: (trig.client_name && String(trig.client_name).trim()) || null,\n    order_type: Number(trig.order_type) || null\n  }\n}];"
       }
     },
     {
@@ -283,16 +283,32 @@
       }
     },
     {
-      "id": "node-real-send-stub",
-      "name": "Real WA Send (stub)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "node-send-wa",
+      "name": "Send WA via Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1960,
         360
       ],
       "parameters": {
-        "jsCode": "// Заглушка для production-отправки в WhatsApp Cloud API.\n// Будет заменена на узел WhatsApp Business Cloud, когда подключим cred_meta_whatsapp.\n// Пока: бросает ошибку, чтобы случайно не активировать без замены.\n\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+        "method": "POST",
+        "url": "http://sushimarket-dashboard:8080/api/wa/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"phone\": \"{{ $json.target_phone }}\",\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"order_id\": {{ $json.order_id }},\n  \"template\": \"{{ $json.template }}\"\n}",
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "responseFormat": "json" } }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "B05luGLJmm46wVY8",
+          "name": "Dashboard Internal Token"
+        }
       }
     },
     {
@@ -481,7 +497,7 @@
         ],
         [
           {
-            "node": "Real WA Send (stub)",
+            "node": "Send WA via Dashboard",
             "type": "main",
             "index": 0
           }
@@ -499,7 +515,7 @@
         ]
       ]
     },
-    "Real WA Send (stub)": {
+    "Send WA via Dashboard": {
       "main": [
         [
           {

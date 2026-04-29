@@ -301,16 +301,32 @@
       }
     },
     {
-      "id": "node-real-send-stub",
-      "name": "Real WA Send (stub)",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "node-send-wa",
+      "name": "Send WA via Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2180,
         360
       ],
       "parameters": {
-        "jsCode": "// Stub реальной WA-отправки. См. WF-B note.\nthrow new Error('Real WhatsApp send is not implemented yet. Switch META_DRY_RUN back to true or implement WA Cloud API node before flipping.');"
+        "method": "POST",
+        "url": "http://sushimarket-dashboard:8080/api/wa/send",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"phone\": \"{{ $json.target_phone }}\",\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"order_id\": {{ $json.order_id }},\n  \"template\": \"{{ $json.template }}\"\n}",
+        "options": {
+          "timeout": 30000,
+          "response": { "response": { "responseFormat": "json" } }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "B05luGLJmm46wVY8",
+          "name": "Dashboard Internal Token"
+        }
       }
     },
     {
@@ -445,7 +461,7 @@
         ],
         [
           {
-            "node": "Real WA Send (stub)",
+            "node": "Send WA via Dashboard",
             "type": "main",
             "index": 0
           }
@@ -463,7 +479,7 @@
         ]
       ]
     },
-    "Real WA Send (stub)": {
+    "Send WA via Dashboard": {
       "main": [
         [
           {
@@ -839,7 +855,7 @@
       },
       {
         "id": "node-real-send-stub",
-        "name": "Real WA Send (stub)",
+        "name": "Send WA via Dashboard",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
@@ -982,7 +998,7 @@
           ],
           [
             {
-              "node": "Real WA Send (stub)",
+              "node": "Send WA via Dashboard",
               "type": "main",
               "index": 0
             }
@@ -1000,7 +1016,7 @@
           ]
         ]
       },
-      "Real WA Send (stub)": {
+      "Send WA via Dashboard": {
         "main": [
           [
             {

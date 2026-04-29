@@ -39,18 +39,34 @@ app.disable('x-powered-by');
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Внутренний endpoint для n8n — авторизация через X-Internal-Token.
+// Дополнительно пишет факт отправки в notification_log, чтобы был
+// единый аудит-журнал в БД (вместо разных мест в каждом workflow).
 app.post('/api/wa/send', async (req, res) => {
   if (!INTERNAL_TOKEN || req.headers['x-internal-token'] !== INTERNAL_TOKEN) {
     return res.status(401).json({ ok: false, error: 'invalid_token' });
   }
-  const { phone, text } = req.body || {};
+  const { phone, text, order_id, template } = req.body || {};
   if (!phone || !text) {
     return res.status(400).json({ ok: false, error: 'phone_and_text_required' });
   }
+  const tplName = template || 'unknown';
+  const orderIdNum = Number(order_id) || 0;
   try {
     const r = await wa.sendMessage(String(phone), String(text));
+    // Лог успешной отправки.
+    q(
+      `INSERT INTO notification_log(order_id, template, channel, target_phone, payload, response, success)
+       VALUES ($1::bigint, $2, 'whatsapp', $3, $4::jsonb, $5::jsonb, true)`,
+      [orderIdNum, tplName, String(phone), JSON.stringify({ text }), JSON.stringify(r)]
+    ).catch((e) => console.error('notification_log insert failed:', e.message));
     res.json({ ok: true, ...r });
   } catch (e) {
+    // Лог провала.
+    q(
+      `INSERT INTO notification_log(order_id, template, channel, target_phone, payload, success, error_text)
+       VALUES ($1::bigint, $2, 'whatsapp', $3, $4::jsonb, false, $5)`,
+      [orderIdNum, tplName, String(phone), JSON.stringify({ text }), String(e.message).slice(0, 500)]
+    ).catch((err) => console.error('notification_log insert failed:', err.message));
     res.status(500).json({ ok: false, error: e.message });
   }
 });
