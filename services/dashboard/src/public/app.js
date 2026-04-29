@@ -51,7 +51,14 @@ themeBtn.addEventListener('click', () => {
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { credentials: 'include', ...opts });
-  if (!res.ok) throw new Error(`${url} → ${res.status}`);
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = await res.json();
+      detail = body.error || JSON.stringify(body);
+    } catch { /* ignore */ }
+    throw new Error(`${url} → ${res.status}${detail ? ': ' + detail : ''}`);
+  }
   return res.json();
 }
 
