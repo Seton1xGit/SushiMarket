@@ -44,9 +44,9 @@ function buildClient() {
         '--disable-gpu',
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
-        '--no-zygote',
-        '--single-process',
         '--disable-extensions',
+        // НЕ используем --single-process / --no-zygote — они ломают
+        // puppeteer внутри docker (известный issue).
       ],
       headless: true,
     },
@@ -54,32 +54,61 @@ function buildClient() {
 }
 
 async function ensureClient() {
-  if (client) return client;
+  if (client) {
+    console.log('[wa] ensureClient: already exists, status=' + status);
+    return client;
+  }
+  console.log('[wa] ensureClient: building new client, executablePath=' + (process.env.PUPPETEER_EXECUTABLE_PATH || 'auto') + ', sessionDir=' + SESSION_DIR);
   client = buildClient();
 
   client.on('qr', async (qr) => {
-    qrDataUrl = await qrcode.toDataURL(qr, { width: 320, margin: 1 });
-    setStatus('qr_pending');
+    console.log('[wa] qr event received, len=' + (qr ? qr.length : 0));
+    try {
+      qrDataUrl = await qrcode.toDataURL(qr, { width: 320, margin: 1 });
+      setStatus('qr_pending');
+    } catch (e) {
+      console.error('[wa] failed to render QR:', e.message);
+    }
+  });
+
+  client.on('loading_screen', (percent, msg) => {
+    console.log(`[wa] loading_screen: ${percent}% — ${msg}`);
   });
 
   client.on('authenticated', () => {
+    console.log('[wa] authenticated event');
     qrDataUrl = null;
     setStatus('authenticated');
   });
 
   client.on('ready', () => {
+    console.log('[wa] ready event');
     qrDataUrl = null;
     setStatus('ready');
   });
 
-  client.on('auth_failure', (msg) => setStatus('error', `auth_failure: ${msg}`));
+  client.on('auth_failure', (msg) => {
+    console.error('[wa] auth_failure:', msg);
+    setStatus('error', `auth_failure: ${msg}`);
+  });
+
   client.on('disconnected', (reason) => {
+    console.error('[wa] disconnected:', reason);
     setStatus('disconnected', `reason: ${reason}`);
     qrDataUrl = null;
     client = null;
   });
 
-  await client.initialize();
+  console.log('[wa] calling client.initialize()...');
+  try {
+    await client.initialize();
+    console.log('[wa] client.initialize() resolved');
+  } catch (e) {
+    console.error('[wa] client.initialize() THREW:', e.stack || e.message);
+    setStatus('error', `init_failed: ${e.message}`);
+    client = null;
+    throw e;
+  }
   return client;
 }
 
@@ -97,11 +126,13 @@ export async function startAndGetQr() {
   await ensureClient();
   // Если уже ready — QR не нужен, возвращаем null.
   if (status === 'ready' || status === 'authenticated') return null;
-  // Иначе ждём пока появится QR (макс 30 сек).
+  // Иначе ждём пока появится QR (макс 60 сек — Chromium на холодный
+  // старт может тратить 15-30с до подключения к web.whatsapp.com).
   const t0 = Date.now();
-  while (!qrDataUrl && status !== 'ready' && Date.now() - t0 < 30_000) {
+  while (!qrDataUrl && status !== 'ready' && Date.now() - t0 < 60_000) {
     await new Promise((r) => setTimeout(r, 250));
   }
+  console.log(`[wa] startAndGetQr: returning, status=${status}, has_qr=${!!qrDataUrl}, waited=${Date.now()-t0}ms`);
   return qrDataUrl;
 }
 
