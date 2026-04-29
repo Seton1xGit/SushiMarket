@@ -31,3 +31,5 @@ services/*/node_modules/
 # Temporary handover artefacts (delete after passing to deploy agent)
 _HANDOVER-SECRETS.txt
 _handover-*.txt
+_TASK-FOR-PM.md
+_task-for-*.md

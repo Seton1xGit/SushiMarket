@@ -26,6 +26,12 @@ services:
       PORT: 8080
     ports:
       - "127.0.0.1:8080:8080"
+    networks:
+      - default
+      # Подключаем дашборд к внешней сети n8n, чтобы n8n мог
+      # достучаться по DNS-имени `sushimarket-dashboard:8080`.
+      # Сама сеть создаётся другим compose-проектом (n8n) — поэтому external.
+      - n8n_n8n_network
     volumes:
       # Сессия WhatsApp Web сохраняется здесь, чтобы переживать рестарт.
       - ./services/dashboard/data:/app/data
@@ -41,3 +47,7 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+
+networks:
+  n8n_n8n_network:
+    external: true
