@@ -22,3 +22,8 @@ Thumbs.db
 # Local DB dumps
 *.sql.gz
 *.dump
+
+# Docker / Node
+node_modules/
+services/*/data/
+services/*/node_modules/

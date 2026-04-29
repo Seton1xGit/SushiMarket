@@ -1,0 +1,43 @@
+# SushiMarket TR — Dashboard + WhatsApp bridge
+#
+# Один контейнер `dashboard` обслуживает:
+#   * UI мониторинга (HTML + Tailwind + Chart.js)
+#   * REST API для агрегатов из Postgres
+#   * Подключение WhatsApp через QR (whatsapp-web.js, добавится позже)
+#   * Внутренний /api/wa/send для отправки из n8n
+#
+# Порт 8080 биндим только на 127.0.0.1 — наружу выставлять через nginx/Caddy
+# с TLS и доменом (например, dashboard.<your-domain>).
+
+name: sushimarket
+
+services:
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    image: sushimarket-dashboard:local
+    container_name: sushimarket-dashboard
+    env_file:
+      - path: ./.env
+        required: true
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Сессия WhatsApp Web сохраняется здесь, чтобы переживать рестарт.
+      - ./services/dashboard/data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
