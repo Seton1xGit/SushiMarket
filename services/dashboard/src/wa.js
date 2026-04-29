@@ -11,6 +11,7 @@
 //   logout()              — разлогинивает и удаляет сессию.
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import qrcode from 'qrcode';
 import pkg from 'whatsapp-web.js';
@@ -18,6 +19,30 @@ import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_DIR = process.env.WA_SESSION_DIR || '/app/data/wa-session';
+
+// При нечистом завершении Chromium оставляет lock-файлы (SingletonLock/Cookie/Socket).
+// Если не удалить — следующий старт упадёт с "profile appears to be in use".
+function cleanStaleLocks() {
+  try {
+    if (!fs.existsSync(SESSION_DIR)) return;
+    const stack = [SESSION_DIR];
+    while (stack.length) {
+      const dir = stack.pop();
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          stack.push(full);
+        } else if (/^Singleton(Lock|Cookie|Socket)$/.test(ent.name)) {
+          try { fs.unlinkSync(full); console.log('[wa] removed stale lock:', full); } catch {}
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[wa] cleanStaleLocks failed (ignored):', e.message);
+  }
+}
 
 let client = null;
 let status = 'disconnected';
@@ -58,6 +83,7 @@ async function ensureClient() {
     console.log('[wa] ensureClient: already exists, status=' + status);
     return client;
   }
+  cleanStaleLocks();
   console.log('[wa] ensureClient: building new client, executablePath=' + (process.env.PUPPETEER_EXECUTABLE_PATH || 'auto') + ', sessionDir=' + SESSION_DIR);
   client = buildClient();
 
