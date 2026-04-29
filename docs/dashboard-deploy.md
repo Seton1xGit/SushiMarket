@@ -126,7 +126,8 @@ sudo rm -rf services/dashboard/data
 |---|---|---|
 | `docker compose up` падает на build с ошибкой `npm ci` | нет сети из контейнера на npm registry | проверить egress: `docker run --rm alpine wget -qO- https://registry.npmjs.org/` |
 | `/api/stats` отдаёт 500 | проблема с Postgres DSN | `docker compose exec dashboard node -e "import('./src/db.js').then(m=>m.q('SELECT 1').then(console.log))"` |
-| WhatsApp QR не появляется | Chromium не стартанул | `docker compose logs dashboard | grep -i chromium` |
+| WhatsApp QR не появляется, статус «disconnected», `/api/wa/qr` 500 | Chromium не стартанул | (1) глянуть `docker logs --tail=200 sushimarket-dashboard` — ищем `Failed to launch`/`error while loading shared libraries`/`Navigation timeout`. (2) убедиться что в compose стоит `shm_size: 1gb` (Chromium падает на дефолтном 64MB). (3) перебилдить: `docker compose down && docker compose up -d --build`. |
+| `Failed to launch the browser process! ... libgobject-2.0.so.0` | Alpine-base без нужных .so | используем `node:22-bookworm-slim` (debian) — должно быть в Dockerfile. |
 | Basic-auth не пускает | пароль с спецсимволами | проверить, что в `.env` пароль не в кавычках, без `\n` |
 
 ---

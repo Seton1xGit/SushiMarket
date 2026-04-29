@@ -38,6 +38,10 @@ services:
     volumes:
       # Сессия WhatsApp Web сохраняется здесь, чтобы переживать рестарт.
       - ./services/dashboard/data:/app/data
+    # Chromium падает на дефолтном /dev/shm = 64MB при загрузке web.whatsapp.com.
+    shm_size: '1gb'
+    # init=true — proper SIGTERM, чтобы Chromium-зомби не висели после рестарта.
+    init: true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
