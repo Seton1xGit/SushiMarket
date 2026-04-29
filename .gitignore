@@ -27,3 +27,7 @@ Thumbs.db
 node_modules/
 services/*/data/
 services/*/node_modules/
+
+# Temporary handover artefacts (delete after passing to deploy agent)
+_HANDOVER-SECRETS.txt
+_handover-*.txt
