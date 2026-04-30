@@ -66,7 +66,7 @@
         480
       ],
       "parameters": {
-        "jsCode": "// Конфиг WF-D + расчёт target_time и cutoff_time.\n//\n// dry_run                — true в dev, false в prod (ровно как в WF-B/C).\n// nps_delay_minutes      — задержка от completed_at до отправки. 120 = 2 часа. Для dev можно ставить 1.\n// nps_cutoff_hour        — час в Europe/Istanbul, после которого NPS не шлём.\n// OPERATOR_REDIRECT_PHONE — пока тестируем, ВСЕ клиентские сообщения летят на этот номер. Когда уверены — '' или null.\n\nconst DRY_RUN = true;\nconst NPS_DELAY_MIN = 120;\nconst NPS_CUTOFF_HOUR = 22;\nconst TZ = 'Europe/Istanbul';\nconst OPERATOR_REDIRECT_PHONE = '79000430011';\n\nconst trig = $('Receive Order Completed').first().json;\nconst orderId = Number(trig.order_id);\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst targetPhone = OPERATOR_REDIRECT_PHONE || clientPhone;\nconst clientName = (trig.client_name && String(trig.client_name).trim()) || null;\nconst orderType = Number(trig.order_type) || null;\nconst completedAtRaw = trig.completed_at;\n\nlet completedAt;\nif (!completedAtRaw) {\n  completedAt = new Date();\n} else if (typeof completedAtRaw === 'number') {\n  completedAt = new Date(completedAtRaw);\n} else {\n  completedAt = new Date(String(completedAtRaw));\n}\nif (isNaN(completedAt.getTime())) {\n  throw new Error('Invalid completed_at: ' + String(completedAtRaw));\n}\n\nconst targetTime = new Date(completedAt.getTime() + NPS_DELAY_MIN * 60 * 1000);\n\nconst tzOffsetHours = 3;\nconst dateInTz = new Date(completedAt.getTime() + tzOffsetHours * 60 * 60 * 1000);\nconst y = dateInTz.getUTCFullYear();\nconst m = String(dateInTz.getUTCMonth() + 1).padStart(2, '0');\nconst d = String(dateInTz.getUTCDate()).padStart(2, '0');\nconst hh = String(NPS_CUTOFF_HOUR).padStart(2, '0');\nconst cutoffIso = `${y}-${m}-${d}T${hh}:00:00+03:00`;\nconst cutoffTime = new Date(cutoffIso);\n\nconst withinWindow = targetTime.getTime() <= cutoffTime.getTime();\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: orderId,\n    client_phone: clientPhone,\n    target_phone: targetPhone,\n    is_redirected: !!OPERATOR_REDIRECT_PHONE,\n    client_name: clientName,\n    order_type: orderType,\n    completed_at: completedAt.toISOString(),\n    target_time: targetTime.toISOString(),\n    cutoff_time: cutoffTime.toISOString(),\n    within_window: withinWindow,\n    nps_delay_minutes: NPS_DELAY_MIN,\n    tz: TZ\n  }\n}];"
+        "jsCode": "// Конфиг WF-D + расчёт target_time и cutoff_time.\n//\n// dry_run                — true в dev, false в prod (ровно как в WF-B/C).\n// nps_delay_minutes      — задержка от completed_at до отправки. 120 = 2 часа. Для dev можно ставить 1.\n// nps_cutoff_hour        — час в Europe/Istanbul, после которого NPS не шлём.\n// OPERATOR_REDIRECT_PHONE — пока тестируем, ВСЕ клиентские сообщения летят на этот номер. Когда уверены — '' или null.\n\nconst DRY_RUN = false;\nconst NPS_DELAY_MIN = 1;\nconst NPS_CUTOFF_HOUR = 22;\nconst TZ = 'Europe/Istanbul';\nconst OPERATOR_REDIRECT_PHONE = '79000430011';\n\nconst trig = $('Receive Order Completed').first().json;\nconst orderId = Number(trig.order_id);\nconst clientPhone = String(trig.client_phone || '').replace(/[^0-9]/g, '');\nconst targetPhone = OPERATOR_REDIRECT_PHONE || clientPhone;\nconst clientName = (trig.client_name && String(trig.client_name).trim()) || null;\nconst orderType = Number(trig.order_type) || null;\nconst completedAtRaw = trig.completed_at;\n\nlet completedAt;\nif (!completedAtRaw) {\n  completedAt = new Date();\n} else if (typeof completedAtRaw === 'number') {\n  completedAt = new Date(completedAtRaw);\n} else {\n  completedAt = new Date(String(completedAtRaw));\n}\nif (isNaN(completedAt.getTime())) {\n  throw new Error('Invalid completed_at: ' + String(completedAtRaw));\n}\n\nconst targetTime = new Date(completedAt.getTime() + NPS_DELAY_MIN * 60 * 1000);\n\nconst tzOffsetHours = 3;\nconst dateInTz = new Date(completedAt.getTime() + tzOffsetHours * 60 * 60 * 1000);\nconst y = dateInTz.getUTCFullYear();\nconst m = String(dateInTz.getUTCMonth() + 1).padStart(2, '0');\nconst d = String(dateInTz.getUTCDate()).padStart(2, '0');\nconst hh = String(NPS_CUTOFF_HOUR).padStart(2, '0');\nconst cutoffIso = `${y}-${m}-${d}T${hh}:00:00+03:00`;\nconst cutoffTime = new Date(cutoffIso);\n\nconst withinWindow = targetTime.getTime() <= cutoffTime.getTime();\n\nreturn [{\n  json: {\n    dry_run: DRY_RUN,\n    order_id: orderId,\n    client_phone: clientPhone,\n    target_phone: targetPhone,\n    is_redirected: !!OPERATOR_REDIRECT_PHONE,\n    client_name: clientName,\n    order_type: orderType,\n    completed_at: completedAt.toISOString(),\n    target_time: targetTime.toISOString(),\n    cutoff_time: cutoffTime.toISOString(),\n    within_window: withinWindow,\n    nps_delay_minutes: NPS_DELAY_MIN,\n    tz: TZ\n  }\n}];"
       }
     },
     {
@@ -207,12 +207,12 @@
           },
           "conditions": [
             {
-              "id": "completed",
-              "leftValue": "={{ String($('Re-Check State').first().json.last_status || '') }}",
-              "rightValue": "completed",
+              "id": "not-canceled",
+              "leftValue": "={{ String($('Re-Check State').first().json.last_status || '').toLowerCase() }}",
+              "rightValue": "canceled",
               "operator": {
                 "type": "string",
-                "operation": "equals"
+                "operation": "notEquals"
               }
             },
             {
@@ -240,7 +240,7 @@
         280
       ],
       "parameters": {
-        "jsCode": "const cfg = $('Config').first().json;\nconst greeting = cfg.client_name ? `Здравствуйте, ${cfg.client_name}!` : 'Здравствуйте!';\n\nconst lines = [];\nlines.push(greeting);\nlines.push('');\nlines.push('Поделитесь, пожалуйста, впечатлениями: всё ли вам понравилось?');\nlines.push('Любая обратная связь — большая помощь нам!');\nlines.push('');\nlines.push('Спасибо, что выбрали SushiMarket!');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    target_phone: cfg.target_phone,\n    is_redirected: cfg.is_redirected,\n    template: 'feedback_request_ru',\n    text: lines.join('\\n')\n  }\n}];"
+        "jsCode": "const cfg = $('Config').first().json;\nconst name = cfg.client_name || '';\nconst greetTR = name ? `Merhabalar, ${name}!` : 'Merhabalar!';\nconst greetRU = name ? `Здравствуйте, ${name}!` : 'Здравствуйте!';\nconst greetEN = name ? `Hi, ${name}!` : 'Hi!';\n\nconst block = [\n  `🇹🇷 ${greetTR}`,\n  `   Lütfen geri bildiriminizi paylaşın: her şey hoşunuza gitti mi?`,\n  `   Her türlü geri bildirim bizim için çok değerlidir!`,\n  `   SushiMarket'i tercih ettiğiniz için teşekkür ederiz!`,\n  '',\n  `🇷🇺 ${greetRU}`,\n  `   Поделитесь, пожалуйста, впечатлениями: всё ли вам понравилось?`,\n  `   Любая обратная связь — большая помощь нам!`,\n  `   Спасибо, что выбрали SushiMarket!`,\n  '',\n  `🇬🇧 ${greetEN}`,\n  `   Please share your feedback: did you enjoy everything?`,\n  `   Any feedback is a huge help to us!`,\n  `   Thank you for choosing SushiMarket!`\n].join('\n');\n\nreturn [{\n  json: {\n    order_id: cfg.order_id,\n    client_phone: cfg.client_phone,\n    target_phone: cfg.target_phone,\n    is_redirected: cfg.is_redirected,\n    template: 'feedback_request_ru',\n    text: block\n  }\n}];"
       }
     },
     {
@@ -319,7 +319,11 @@
         "jsonBody": "={\n  \"phone\": \"{{ $json.target_phone }}\",\n  \"text\": {{ JSON.stringify($json.text) }},\n  \"order_id\": {{ $json.order_id }},\n  \"template\": \"{{ $json.template }}\"\n}",
         "options": {
           "timeout": 30000,
-          "response": { "response": { "responseFormat": "json" } }
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
         }
       },
       "credentials": {

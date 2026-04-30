@@ -153,7 +153,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "const input = $input.first()?.json ?? {};\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nfunction extractName(s) {\n  const stripped = stripHtml(s);\n  // Убираем телефон-подобные последовательности (8+ цифр со знаками-разделителями).\n  const noPhone = stripped.replace(/[\\d+\\-() ]{8,}/g, ' ').replace(/\\s+/g, ' ').trim();\n  return noPhone || null;\n}\nlet skippedBracketed = 0;\nconst orders = rows.map(r => {\n  const cleanName = extractName(r.ClientName);\n  // Системные/тестовые заказы маркируются префиксом в []: [Web-Se], [Test], etc.\n  // Их игнорируем — не пишем в БД, не отправляем сообщения.\n  if (cleanName && /[\\[\\]]/.test(cleanName)) {\n    skippedBracketed += 1;\n    return null;\n  }\n  return {\n    order_id: Number(r.id),\n    client_phone: typeof r.ClientPhone === 'string' ? r.ClientPhone.replace(/[^0-9]/g, '') : null,\n    client_name: cleanName,\n    order_type: typeof r.order_type === 'number' ? r.order_type : null,\n    status_raw: stripHtml(r.Status).slice(0, 100)\n  };\n}).filter(o => o && Number.isFinite(o.order_id));\nif (skippedBracketed > 0) {\n  console.log(`[wf-a] skipped ${skippedBracketed} bracketed-name orders (system/test)`);\n}\nreturn [{ json: { orders, count: orders.length, skipped_bracketed: skippedBracketed, fetched_at: new Date().toISOString() } }];"
+        "jsCode": "const input = $input.first()?.json ?? {};\nlet payload = input;\nif (typeof input === 'string') {\n  try { payload = JSON.parse(input); } catch (e) {\n    throw new Error('Listing body is not JSON: ' + String(input).slice(0, 200));\n  }\n}\nif (typeof payload?.data === 'string') {\n  try { payload = JSON.parse(payload.data); } catch (e) {\n    throw new Error('Listing.data is not JSON: ' + String(payload.data).slice(0, 200));\n  }\n}\nconst rows = Array.isArray(payload?.data) ? payload.data : null;\nif (rows === null) {\n  throw new Error('Listing response has no data array. Got keys: ' + Object.keys(payload || {}).join(','));\n}\nfunction stripHtml(s) {\n  if (typeof s !== 'string') return '';\n  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nfunction extractName(s) {\n  const stripped = stripHtml(s);\n  const noPhone = stripped.replace(/[\\d+\\-() ]{8,}/g, ' ').replace(/\\s+/g, ' ').trim();\n  return noPhone || null;\n}\nfunction extractAddress(s) {\n  if (typeof s !== 'string') return null;\n  // Prefer text inside <span class=\"modal_link\">...</span> — that's the street address.\n  const m = s.match(/<span class=\"modal_link\"[^>]*>([^<]+)<\\/span>/);\n  if (m) return m[1].replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim() || null;\n  // Fallback: strip everything, drop leading city if it's the bold first word.\n  let s2 = stripHtml(s);\n  s2 = s2.replace(/^[A-Za-zА-Яа-я]+\\s+(?=[A-Za-zА-Яа-я])/, '');\n  return s2 || null;\n}\nfunction extractAmount(s) {\n  if (s == null) return null;\n  const stripped = stripHtml(String(s));\n  const m = stripped.match(/[\\d]+(?:[.,]\\d+)?/);\n  if (!m) return null;\n  const n = Number(m[0].replace(',', '.'));\n  return Number.isFinite(n) ? n : null;\n}\nlet skippedBracketed = 0;\nconst orders = rows.map(r => {\n  const cleanName = extractName(r.ClientName);\n  if (cleanName && /[\\[\\]]/.test(cleanName)) {\n    skippedBracketed += 1;\n    return null;\n  }\n  return {\n    order_id: Number(r.id),\n    client_phone: r.ClientPhone != null ? String(r.ClientPhone).replace(/[^0-9]/g, '') : null,\n    client_name: cleanName,\n    order_type: typeof r.order_type === 'number' ? r.order_type : null,\n    status_raw: stripHtml(r.Status).slice(0, 100),\n    address: extractAddress(r.Address),\n    amount: extractAmount(r.OrderAmount)\n  };\n}).filter(o => o && Number.isFinite(o.order_id));\nif (skippedBracketed > 0) {\n  console.log(`[wf-a] skipped ${skippedBracketed} bracketed-name orders (system/test)`);\n}\nreturn [{ json: { orders, count: orders.length, skipped_bracketed: skippedBracketed, fetched_at: new Date().toISOString() } }];"
       }
     },
     {
@@ -188,7 +188,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "const listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\nconst events = [];\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      client_name: k.client_name || null,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\nreturn events.map(e => ({ json: e }));"
+        "jsCode": "const listing = ($('Validate Listing').first()?.json?.orders) || [];\nconst known   = $('Load Known').all().map(i => i.json).filter(j => j && j.order_id != null);\nconst byIdListing = new Map(listing.map(o => [o.order_id, o]));\nconst byIdKnown   = new Map(known.map(k => [Number(k.order_id), k]));\nconst events = [];\nfor (const o of listing) {\n  const k = byIdKnown.get(o.order_id);\n  if (!k) {\n    events.push({\n      event_type: 'new_order',\n      order_id: o.order_id,\n      client_phone: o.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type,\n      status_raw: o.status_raw,\n      address: o.address,\n      amount: o.amount,\n      detected_at: new Date().toISOString()\n    });\n    continue;\n  }\n  if (String(o.status_raw) !== String(k.last_status)) {\n    events.push({\n      event_type: 'status_changed',\n      order_id: o.order_id,\n      client_phone: o.client_phone || k.client_phone,\n      client_name: o.client_name,\n      order_type: o.order_type ?? k.order_type,\n      from_status: k.last_status,\n      to_status: o.status_raw,\n      status_raw: o.status_raw,\n      address: o.address,\n      amount: o.amount,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nfor (const k of known) {\n  if (!byIdListing.has(Number(k.order_id))) {\n    events.push({\n      event_type: 'order_closed',\n      order_id: Number(k.order_id),\n      client_phone: k.client_phone,\n      client_name: k.client_name || null,\n      order_type: k.order_type,\n      last_known_status: k.last_status,\n      detected_at: new Date().toISOString()\n    });\n  }\n}\nif (events.length === 0) {\n  return [{ json: { event_type: '_no_events', listing_count: listing.length, known_count: known.length, fetched_at: new Date().toISOString() } }];\n}\nreturn events.map(e => ({ json: e }));"
       }
     },
     {
@@ -292,7 +292,8 @@
         "operation": "executeQuery",
         "query": "INSERT INTO order_events(order_id, client_phone, client_name, order_type, last_status, last_seen_at) VALUES ($1::bigint, NULLIF($2, '-'), NULLIF($3, '-'), NULLIF($4, 0)::smallint, $5, NOW()) ON CONFLICT (order_id) DO UPDATE SET last_status = EXCLUDED.last_status, last_seen_at = NOW(), client_phone = COALESCE(order_events.client_phone, EXCLUDED.client_phone), client_name = COALESCE(order_events.client_name, EXCLUDED.client_name)",
         "options": {
-          "queryReplacement": "={{ $json.order_id }},={{ $json.client_phone || '-' }},={{ ($json.client_name || '-').replace(/,/g, ' ') }},={{ Number($json.order_type) || 0 }},={{ $json.status_raw || '-' }}"
+          "queryReplacement": "={{ $json.order_id }},={{ $json.client_phone || '-' }},={{ ($json.client_name || '-').replace(/,/g, ' ') }},={{ Number($json.order_type) || 0 }},={{ $json.status_raw || '-' }}",
+          "queryBatching": "independently"
         }
       },
       "credentials": {
@@ -300,7 +301,8 @@
           "id": "VCeTigIhYateDNgR",
           "name": "cred_postgres"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "node-welcome-gate",
@@ -321,7 +323,8 @@
           },
           "conditions": [
             {
-              "leftValue": "={{ Number($json.order_type) || 0 }}",
+              "id": "delivery",
+              "leftValue": "={{ Number($('Compute Diff').itemMatching($itemIndex).json.order_type) || 0 }}",
               "rightValue": 1,
               "operator": {
                 "type": "number",
@@ -352,10 +355,12 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "order_id": "={{ $json.order_id }}",
-            "client_phone": "={{ $json.client_phone }}",
-            "client_name": "={{ $json.client_name }}",
-            "order_type": "={{ $json.order_type }}"
+            "order_id": "={{ $('Compute Diff').itemMatching($itemIndex).json.order_id }}",
+            "client_phone": "={{ $('Compute Diff').itemMatching($itemIndex).json.client_phone }}",
+            "client_name": "={{ $('Compute Diff').itemMatching($itemIndex).json.client_name }}",
+            "order_type": "={{ $('Compute Diff').itemMatching($itemIndex).json.order_type }}",
+            "address": "={{ $('Compute Diff').itemMatching($itemIndex).json.address }}",
+            "amount": "={{ $('Compute Diff').itemMatching($itemIndex).json.amount }}"
           },
           "matchingColumns": [],
           "schema": [],
@@ -378,7 +383,8 @@
         "operation": "executeQuery",
         "query": "UPDATE order_events SET last_status = $1, last_seen_at = NOW() WHERE order_id = $2::bigint",
         "options": {
-          "queryReplacement": "={{ $json.status_raw || $json.to_status || '-' }},={{ $json.order_id }}"
+          "queryReplacement": "={{ $json.status_raw || $json.to_status || '-' }},={{ $json.order_id }}",
+          "queryBatching": "independently"
         }
       },
       "credentials": {
@@ -386,7 +392,8 @@
           "id": "VCeTigIhYateDNgR",
           "name": "cred_postgres"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "node-transit-gate",
@@ -408,7 +415,7 @@
           "conditions": [
             {
               "id": "delivery",
-              "leftValue": "={{ Number($json.order_type) || 0 }}",
+              "leftValue": "={{ Number($('Compute Diff').itemMatching($itemIndex).json.order_type) || 0 }}",
               "rightValue": 1,
               "operator": {
                 "type": "number",
@@ -417,8 +424,8 @@
             },
             {
               "id": "in-transit-words",
-              "leftValue": "={{ String($json.to_status || '').toLowerCase() }}",
-              "rightValue": "достав|курьер в пути|курьер выехал",
+              "leftValue": "={{ String($('Compute Diff').itemMatching($itemIndex).json.to_status || '').toLowerCase() }}",
+              "rightValue": "доставляется",
               "operator": {
                 "type": "string",
                 "operation": "regex"
@@ -448,11 +455,13 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "order_id": "={{ $json.order_id }}",
-            "client_phone": "={{ $json.client_phone }}",
-            "client_name": "={{ $json.client_name }}",
-            "order_type": "={{ $json.order_type }}",
-            "to_status": "={{ $json.to_status }}"
+            "order_id": "={{ $('Compute Diff').itemMatching($itemIndex).json.order_id }}",
+            "client_phone": "={{ $('Compute Diff').itemMatching($itemIndex).json.client_phone }}",
+            "client_name": "={{ $('Compute Diff').itemMatching($itemIndex).json.client_name }}",
+            "order_type": "={{ $('Compute Diff').itemMatching($itemIndex).json.order_type }}",
+            "to_status": "={{ $('Compute Diff').itemMatching($itemIndex).json.to_status }}",
+            "address": "={{ $('Compute Diff').itemMatching($itemIndex).json.address }}",
+            "amount": "={{ $('Compute Diff').itemMatching($itemIndex).json.amount }}"
           },
           "matchingColumns": [],
           "schema": [],
@@ -522,7 +531,8 @@
         "operation": "executeQuery",
         "query": "UPDATE order_events SET last_status = $1, last_seen_at = NOW(), completed_at = CASE WHEN $1 = 'completed' AND completed_at IS NULL THEN NOW() ELSE completed_at END WHERE order_id = $2::bigint",
         "options": {
-          "queryReplacement": "={{ $json.final_status || '-' }},={{ $json.order_id }}"
+          "queryReplacement": "={{ $json.final_status || '-' }},={{ $json.order_id }}",
+          "queryBatching": "independently"
         }
       },
       "credentials": {
@@ -530,7 +540,8 @@
           "id": "VCeTigIhYateDNgR",
           "name": "cred_postgres"
         }
-      }
+      },
+      "alwaysOutputData": true
     },
     {
       "id": "node-completed-gate",
@@ -605,7 +616,8 @@
           "convertFieldsToString": false
         },
         "options": {}
-      }
+      },
+      "disabled": true
     }
   ],
   "connections": {

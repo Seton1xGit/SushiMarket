@@ -23,6 +23,9 @@ Thumbs.db
 *.sql.gz
 *.dump
 
+# Local scratch (debug scripts, exec dumps)
+.tmp/
+
 # Docker / Node
 node_modules/
 services/*/data/
